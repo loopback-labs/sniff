@@ -100,13 +100,20 @@ class AudioCaptureService: NSObject, ObservableObject {
     }
     
     func stopCapture() {
+        guard isCapturing else { return }
+        
         recognitionTask?.cancel()
         recognitionTask = nil
+        
         recognitionRequest?.endAudio()
         recognitionRequest = nil
-        audioEngine?.stop()
-        audioEngine?.inputNode.removeTap(onBus: 0)
+        
+        if let audioEngine = audioEngine {
+            audioEngine.stop()
+            audioEngine.inputNode.removeTap(onBus: 0)
+        }
         audioEngine = nil
+        
         isCapturing = false
     }
     

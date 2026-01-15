@@ -9,40 +9,63 @@ import SwiftUI
 
 struct QADisplayView: View {
     let item: QAItem
-    @State private var showingQuestion = true
+    
+    private var answerText: String {
+        item.answer?.isEmpty == false ? item.answer! : "Generating answer..."
+    }
+    
+    private var isLoading: Bool {
+        item.answer?.isEmpty != false
+    }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Button(action: { showingQuestion.toggle() }) {
-                    Image(systemName: showingQuestion ? "questionmark.circle.fill" : "bubble.left.and.bubble.right.fill")
-                        .foregroundColor(.blue)
-                }
-                .buttonStyle(.plain)
-                
-                Text(showingQuestion ? "Question" : "Answer")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-                
-                if item.answer == nil {
-                    ProgressView()
-                        .scaleEffect(0.5)
-                }
-            }
-            
-            ScrollView {
-                Text(showingQuestion ? item.question : (item.answer ?? "Generating answer..."))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                headerRow(icon: "questionmark.circle.fill", color: .blue, title: "Question")
+                Text(item.question)
                     .font(.system(size: 13))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                
+                Divider()
+                
+                HStack {
+                    headerRow(icon: "bubble.left.and.bubble.right.fill", color: .green, title: "Answer")
+                    if isLoading {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                    }
+                }
+                
+                if let attributedString = try? AttributedString(markdown: answerText) {
+                    Text(attributedString)
+                        .font(.system(size: 13))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(answerText)
+                        .font(.system(size: 13))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .frame(maxHeight: 200)
+            .padding(12)
         }
-        .padding(12)
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.95))
-        .cornerRadius(8)
-        .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
+        .frame(minHeight: 100)
+        .overlayCardStyle()
+    }
+    
+    private func headerRow(icon: String, color: Color, title: String) -> some View {
+        HStack {
+            Image(systemName: icon)
+                .foregroundColor(color)
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer()
+        }
     }
 }

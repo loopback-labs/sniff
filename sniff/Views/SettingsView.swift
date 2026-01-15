@@ -20,30 +20,41 @@ struct SettingsView: View {
                 .font(.title2)
                 .bold()
             
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Perplexity API Key")
-                    .font(.headline)
-                
-                SecureField("Enter API Key", text: $apiKey)
-                    .textFieldStyle(.roundedBorder)
-                
-                HStack {
-                    Button("Save") {
-                        saveAPIKey()
-                    }
-                    .buttonStyle(.borderedProminent)
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Perplexity API Key")
+                        .font(.headline)
                     
-                    Button("Clear") {
-                        clearAPIKey()
+                    SecureField("Enter API Key", text: $apiKey)
+                        .textFieldStyle(.roundedBorder)
+                    
+                    HStack {
+                        Button("Save") {
+                            saveAPIKey()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        
+                        Button("Clear") {
+                            clearAPIKey()
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.bordered)
+                }
+                
+                Divider()
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Display")
+                        .font(.headline)
+                    
+                    Toggle("Include Overlay in Screenshots", isOn: $coordinator.showOverlay)
                 }
             }
             
             Spacer()
         }
         .padding()
-        .frame(width: 400, height: 300)
+        .frame(width: 400, height: 350)
         .onAppear {
             loadAPIKey()
         }

@@ -12,12 +12,12 @@ import Vision
 import AppKit
 import CoreVideo
 
-@MainActor
 class ScreenCaptureService: NSObject, ObservableObject {
     private var contentFilter: SCContentFilter?
     private var stream: SCStream?
-    private let captureInterval: TimeInterval = 2.0
+    private let captureInterval: TimeInterval = 8.0
     private var lastCaptureTime: Date = Date()
+    private let ocrQueue = DispatchQueue(label: "com.sniff.ocrQueue", qos: .userInitiated)
     
     @Published var capturedText: String = ""
     @Published var isCapturing: Bool = false
@@ -41,7 +41,7 @@ class ScreenCaptureService: NSObject, ObservableObject {
         
         let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
         
-        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "screen.capture.queue"))
+        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "screen.capture.queue", qos: .userInitiated))
         try await stream.startCapture()
         
         self.stream = stream
@@ -50,9 +50,21 @@ class ScreenCaptureService: NSObject, ObservableObject {
     }
     
     func stopCapture() async {
-        guard let stream = stream else {
+        guard isCapturing, let stream = stream else {
             isCapturing = false
             return
+        }
+        
+        // Set capturing to false first to prevent new processing
+        await MainActor.run {
+            self.isCapturing = false
+        }
+        
+        // Remove stream output before stopping to prevent callbacks during cleanup
+        do {
+            try stream.removeStreamOutput(self, type: .screen)
+        } catch {
+            print("Failed to remove stream output: \(error)")
         }
         
         do {
@@ -62,36 +74,33 @@ class ScreenCaptureService: NSObject, ObservableObject {
         }
         
         self.stream = nil
-        self.isCapturing = false
+        self.contentFilter = nil
     }
     
     private func extractText(from imageBuffer: CVImageBuffer) {
-        let requestHandler = VNImageRequestHandler(cvPixelBuffer: imageBuffer, options: [:])
-        let request = VNRecognizeTextRequest { [weak self] request, error in
-            guard let self = self else { return }
-            if let error = error {
-                print("OCR error: \(error)")
-                return
+        ocrQueue.async { [weak self] in
+            guard let self = self, self.isCapturing else { return }
+            let request = VNRecognizeTextRequest { [weak self] request, error in
+                guard let self = self, self.isCapturing else { return }
+                if let error = error {
+                    print("OCR error: \(error)")
+                    return
+                }
+                guard let observations = request.results as? [VNRecognizedTextObservation] else { return }
+                let recognizedStrings = observations.compactMap { $0.topCandidates(1).first?.string }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, self.isCapturing else { return }
+                    self.capturedText = recognizedStrings.joined(separator: " ")
+                }
             }
-            
-            guard let observations = request.results as? [VNRecognizedTextObservation] else { return }
-            
-            let recognizedStrings = observations.compactMap { observation in
-                observation.topCandidates(1).first?.string
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+            let requestHandler = VNImageRequestHandler(cvPixelBuffer: imageBuffer, options: [:])
+            do {
+                try requestHandler.perform([request])
+            } catch {
+                print("Failed to perform OCR: \(error)")
             }
-            
-            Task { @MainActor in
-                self.capturedText = recognizedStrings.joined(separator: " ")
-            }
-        }
-        
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-        
-        do {
-            try requestHandler.perform([request])
-        } catch {
-            print("Failed to perform OCR: \(error)")
         }
     }
 }
@@ -99,15 +108,17 @@ class ScreenCaptureService: NSObject, ObservableObject {
 extension ScreenCaptureService: SCStreamOutput {
     nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
+        // Throttle and perform OCR off the main actor
+        ocrQueue.async { [weak self] in
+            guard let self = self, self.isCapturing else { return }
             let now = Date()
             let timeSinceLastCapture = now.timeIntervalSince(self.lastCaptureTime)
-            
             guard timeSinceLastCapture >= self.captureInterval else { return }
-            
-            self.lastCaptureTime = now
+            // Update last capture time on main to keep published state consistent
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.isCapturing else { return }
+                self.lastCaptureTime = Date()
+            }
             self.extractText(from: imageBuffer)
         }
     }

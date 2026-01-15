@@ -64,7 +64,9 @@ struct MenuBarView: View {
             Button("Quit") {
                 Task {
                     await coordinator.stop()
-                    NSApplication.shared.terminate(nil)
+                    await MainActor.run {
+                        NSApplication.shared.terminate(nil)
+                    }
                 }
             }
         }

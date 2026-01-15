@@ -5,39 +5,29 @@
 //  Created by Piyushh Bhutoria on 15/01/26.
 //
 
-import SwiftUI
 import AppKit
 
 class OverlayWindow: NSWindow {
-    override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
-        super.init(contentRect: contentRect, styleMask: [.borderless], backing: backingStoreType, defer: flag)
+    init(contentRect: NSRect) {
+        super.init(contentRect: contentRect, styleMask: [.borderless], backing: .buffered, defer: false)
         
-        self.level = .screenSaver
-        self.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        self.isOpaque = false
-        self.backgroundColor = .clear
-        self.hasShadow = false
-        self.ignoresMouseEvents = false
-        self.isMovableByWindowBackground = true
-        self.acceptsMouseMovedEvents = true
-        
-        // Attempt to hide from screen recording by using sharingType
-        if #available(macOS 11.0, *) {
-            self.sharingType = .none
-        }
+        level = .popUpMenu
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        ignoresMouseEvents = false
+        isMovableByWindowBackground = true
+        acceptsMouseMovedEvents = true
+        sharingType = .readOnly
+        styleMask.insert(.resizable)
     }
     
-    override var canBecomeKey: Bool {
-        return true
-    }
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
     
-    override var canBecomeMain: Bool {
-        return false
-    }
-    
-    override func order(_ place: NSWindow.OrderingMode, relativeTo otherWindowNumber: Int) {
-        super.order(place, relativeTo: otherWindowNumber)
-        // Keep window on top
-        self.level = .screenSaver
+    func setScreenshotInclusion(_ include: Bool) {
+        sharingType = include ? .readOnly : .none
+        level = include ? .popUpMenu : .screenSaver
     }
 }
