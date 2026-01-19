@@ -1,3 +1,21 @@
+# Cursor IDE
 .cursor
 .cursorignore
 AGENTS.md
+
+# Xcode
+xcuserdata/
+DerivedData/
+build/
+*.xcworkspace
+
+# Build artifacts
+*.app
+*.ipa
+*.dSYM
+
+# macOS
+.DS_Store
+
+# Swift Package Manager
+.build/
