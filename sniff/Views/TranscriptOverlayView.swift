@@ -31,7 +31,7 @@ struct TranscriptOverlayView: View {
             .frame(minHeight: 140)
         }
         .padding(12)
-        .frame(minWidth: 350, maxWidth: 800, minHeight: 80, alignment: .topLeading)
-        .overlayCardStyle()
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.8))
     }
 }

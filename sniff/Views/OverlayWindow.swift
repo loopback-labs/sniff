@@ -9,17 +9,16 @@ import AppKit
 
 class OverlayWindow: NSWindow {
     init(contentRect: NSRect) {
-        super.init(contentRect: contentRect, styleMask: [.borderless], backing: .buffered, defer: false)
-        
-        level = .popUpMenu
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel, .titled], backing: .buffered, defer: true)
+        NSApp.setActivationPolicy(.accessory)
+        level = .floating
+        collectionBehavior = [.canJoinAllSpaces, .stationary]
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
-        ignoresMouseEvents = false
         isMovableByWindowBackground = true
-        acceptsMouseMovedEvents = true
-        sharingType = .readOnly
+        titleVisibility = .hidden
+        titlebarAppearsTransparent = true
         styleMask.insert(.resizable)
     }
     
@@ -28,6 +27,7 @@ class OverlayWindow: NSWindow {
     
     func setScreenshotInclusion(_ include: Bool) {
         sharingType = include ? .readOnly : .none
-        level = include ? .popUpMenu : .screenSaver
+        level = include ? .floating : .screenSaver
     }
 }
+

@@ -1,15 +1,13 @@
 //
-//  PerplexityService.swift
+//  GeminiService.swift
 //  sniff
-//
-//  Created by Piyushh Bhutoria on 15/01/26.
 //
 
 import Foundation
 
-class PerplexityService: LLMService {
+class GeminiService: LLMService {
     private let apiKey: String
-    private let baseURL = "https://api.perplexity.ai/chat/completions"
+    private let baseURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent"
     
     init(apiKey: String) {
         self.apiKey = apiKey
@@ -26,24 +24,28 @@ class PerplexityService: LLMService {
         }
 
         let requestBody: [String: Any] = [
-            "model": "sonar",
-            "messages": [
-                ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": question]
+            "system_instruction": [
+                "parts": [["text": systemPrompt]]
             ],
-            "max_tokens": 1024,
-            "temperature": 0.2,
-            "stream": true
+            "contents": [
+                [
+                    "role": "user",
+                    "parts": [["text": question]]
+                ]
+            ],
+            "generationConfig": [
+                "maxOutputTokens": 1024,
+                "temperature": 0.2
+            ]
         ]
 
-        guard let url = URL(string: baseURL) else {
+        guard let url = URL(string: "\(baseURL)?key=\(apiKey)&alt=sse") else {
             throw LLMError.invalidURL
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
         guard let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
             throw LLMError.serializationFailed
@@ -62,10 +64,7 @@ class PerplexityService: LLMService {
         var collected = ""
 
         for try await line in bytes.lines {
-            guard let delta = Self.parseOpenAIStreamLine(line) else { continue }
-            if delta == "[DONE]" {
-                break
-            }
+            guard let delta = Self.parseStreamLine(line) else { continue }
             if !delta.isEmpty {
                 collected += delta
                 onChunk(delta)
@@ -75,31 +74,22 @@ class PerplexityService: LLMService {
         return collected
     }
 
-    static func parseOpenAIStreamLine(_ line: String) -> String? {
+    private static func parseStreamLine(_ line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("data:") else { return nil }
         let payload = trimmed.replacingOccurrences(of: "data:", with: "").trimmingCharacters(in: .whitespaces)
-        if payload == "[DONE]" {
-            return "[DONE]"
-        }
-
+        
         guard let data = payload.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let firstChoice = choices.first else {
+              let candidates = json["candidates"] as? [[String: Any]],
+              let firstCandidate = candidates.first,
+              let content = firstCandidate["content"] as? [String: Any],
+              let parts = content["parts"] as? [[String: Any]],
+              let firstPart = parts.first,
+              let text = firstPart["text"] as? String else {
             return nil
         }
 
-        if let delta = firstChoice["delta"] as? [String: Any],
-           let content = delta["content"] as? String {
-            return content
-        }
-
-        if let message = firstChoice["message"] as? [String: Any],
-           let content = message["content"] as? String {
-            return content
-        }
-
-        return nil
+        return text
     }
 }

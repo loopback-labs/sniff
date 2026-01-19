@@ -9,26 +9,34 @@ import SwiftUI
 import AppKit
 import Combine
 import CoreGraphics
+import HotKey
 
 @MainActor
 class AppCoordinator: ObservableObject {
     let screenCaptureService = ScreenCaptureService()
     let audioCaptureService = AudioCaptureService()
+    let audioDeviceService = AudioDeviceService()
     let questionDetectionService = QuestionDetectionService()
     let technicalQuestionClassifier = TechnicalQuestionClassifier()
     let qaManager = QAManager()
     let transcriptBuffer = TranscriptBuffer()
     let keychainService = KeychainService()
     
-    private var perplexityService: PerplexityService?
+    private var llmService: LLMService?
     private var qaOverlayWindow: NSWindow?
     private var transcriptOverlayWindow: NSWindow?
-    private var eventMonitor: Any?
+    private var hotKeys: [HotKey] = []
     private var cancellables = Set<AnyCancellable>()
     private let transcriptionDeltaProcessor = TranscriptionDeltaProcessor()
     
     @Published var isRunning = false
     @Published var automaticMode = true
+    @Published var selectedProvider: LLMProvider {
+        didSet {
+            UserDefaults.standard.set(selectedProvider.rawValue, forKey: "selectedLLMProvider")
+            rebuildLLMService()
+        }
+    }
     @Published var showOverlay: Bool {
         didSet {
             UserDefaults.standard.set(showOverlay, forKey: "showOverlay")
@@ -37,11 +45,37 @@ class AppCoordinator: ObservableObject {
     }
     
     init() {
+        let savedProvider = UserDefaults.standard.string(forKey: "selectedLLMProvider") ?? LLMProvider.perplexity.rawValue
+        selectedProvider = LLMProvider(rawValue: savedProvider) ?? .perplexity
         showOverlay = UserDefaults.standard.object(forKey: "showOverlay") as? Bool ?? true
-        if let apiKey = keychainService.getAPIKey() {
-            perplexityService = PerplexityService(apiKey: apiKey)
+        rebuildLLMService()
+        applySavedAudioInputDevice()
+    }
+    
+    private func applySavedAudioInputDevice() {
+        guard let savedUID = UserDefaults.standard.string(forKey: "selectedAudioInputDeviceUID") else { return }
+        do {
+            try audioDeviceService.setDefaultInputDevice(byUID: savedUID)
+        } catch {
+            print("Failed to restore saved audio input device: \(error)")
         }
-        setupSubscriptions()
+    }
+    
+    func rebuildLLMService() {
+        guard let apiKey = keychainService.getAPIKey(for: selectedProvider) else {
+            llmService = nil
+            return
+        }
+        switch selectedProvider {
+        case .openai:
+            llmService = OpenAIService(apiKey: apiKey)
+        case .claude:
+            llmService = ClaudeService(apiKey: apiKey)
+        case .gemini:
+            llmService = GeminiService(apiKey: apiKey)
+        case .perplexity:
+            llmService = PerplexityService(apiKey: apiKey)
+        }
     }
     
     private func setupSubscriptions() {
@@ -76,7 +110,7 @@ class AppCoordinator: ObservableObject {
         guard !isRunning else { return }
         
         // Check API key
-        guard perplexityService != nil else {
+        guard llmService != nil else {
             showSettingsWindow()
             return
         }
@@ -106,10 +140,8 @@ class AppCoordinator: ObservableObject {
         await screenCaptureService.stopCapture()
         audioCaptureService.stopCapture()
         
-        if let monitor = eventMonitor {
-            NSEvent.removeMonitor(monitor)
-            eventMonitor = nil
-        }
+        // Clean up hotkeys
+        hotKeys.removeAll()
         
         qaOverlayWindow?.close()
         qaOverlayWindow = nil
@@ -129,75 +161,47 @@ class AppCoordinator: ObservableObject {
     }
     
     private func createQAOverlayWindow() {
-        let config = WindowConfig(
-            widthRatio: 0.4, maxWidth: 800,
-            heightRatio: 0.6, maxHeight: 600,
-            xOffset: -20, yOffset: -20,
-            minSize: NSSize(width: 380, height: 200),
-            maxSizeRatio: (0.8, 0.9),
-            position: .topRight
-        )
+        let size = NSSize(width: 600, height: 400)
         qaOverlayWindow = createOverlayWindow(
-            config: config,
+            size: size,
+            position: .topRight,
             contentView: OverlayContentView(qaManager: qaManager).environmentObject(self),
             name: "Q&A"
         )
     }
 
     private func createTranscriptOverlayWindow() {
-        let config = WindowConfig(
-            widthRatio: 0.35, maxWidth: 600,
-            heightRatio: 0.4, maxHeight: 500,
-            xOffset: 20, yOffset: -20,
-            minSize: NSSize(width: 350, height: 80),
-            maxSizeRatio: (0.7, 0.8),
-            position: .topLeft
-        )
+        let size = NSSize(width: 480, height: 160)
         transcriptOverlayWindow = createOverlayWindow(
-            config: config,
+            size: size,
+            position: .topLeft,
             contentView: TranscriptOverlayView(transcriptBuffer: transcriptBuffer),
             name: "Transcript"
         )
-    }
-    
-    private struct WindowConfig {
-        let widthRatio: CGFloat
-        let maxWidth: CGFloat
-        let heightRatio: CGFloat
-        let maxHeight: CGFloat
-        let xOffset: CGFloat
-        let yOffset: CGFloat
-        let minSize: NSSize
-        let maxSizeRatio: (CGFloat, CGFloat)
-        let position: WindowPosition
     }
     
     private enum WindowPosition {
         case topLeft, topRight
     }
     
-    private func createOverlayWindow(config: WindowConfig, contentView: some View, name: String) -> NSWindow {
+    private func createOverlayWindow(size: NSSize, position: WindowPosition, contentView: some View, name: String) -> NSWindow {
         let screenRect = (NSScreen.main ?? NSScreen.screens.first!).visibleFrame
-        let width = min(screenRect.width * config.widthRatio, config.maxWidth)
-        let height = min(screenRect.height * config.heightRatio, config.maxHeight)
-        
-        let x = config.position == .topLeft
-            ? screenRect.minX + config.xOffset
-            : screenRect.maxX - width + config.xOffset
-        
+        let padding: CGFloat = 20
+        let x = position == .topLeft
+            ? screenRect.minX + padding
+            : screenRect.maxX - size.width - padding
+
         let rect = NSRect(
             x: x,
-            y: screenRect.maxY - height + config.yOffset,
-            width: width,
-            height: height
+            y: screenRect.maxY - size.height - padding,
+            width: size.width,
+            height: size.height
         )
         
         let window = OverlayWindow(contentRect: rect)
-        window.minSize = config.minSize
-        window.maxSize = NSSize(
-            width: screenRect.width * config.maxSizeRatio.0,
-            height: screenRect.height * config.maxSizeRatio.1
-        )
+        window.setFrame(rect, display: true)
+        window.minSize = size
+        window.maxSize = screenRect.size
         window.setScreenshotInclusion(showOverlay)
         window.contentView = NSHostingView(rootView: contentView)
         window.makeKeyAndOrderFront(nil)
@@ -208,35 +212,47 @@ class AppCoordinator: ObservableObject {
     }
     
     private func setupKeyboardShortcuts() {
-        eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            guard let self = self else { return }
-            
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            
-            // Cmd+Shift+Q: Manual question trigger
-            if flags == [.command, .shift] && event.keyCode == 12 {
-                self.triggerManualQuestion()
-                return
-            }
-            
-            // Navigation keys (only when overlay is key)
-            guard self.qaOverlayWindow?.isKeyWindow == true else { return }
-            
-            switch event.keyCode {
-            case 123: // Left arrow
-                self.qaManager.goToPrevious()
-            case 124: // Right arrow
-                self.qaManager.goToNext()
-            case 126 where flags.contains(.command): // Cmd+Up
-                self.qaManager.goToFirst()
-            case 125 where flags.contains(.command): // Cmd+Down
-                self.qaManager.goToLast()
-            case 48: // Tab (handled in QADisplayView)
-                break
-            default:
-                break
-            }
+        // Clear any existing hotkeys
+        hotKeys.removeAll()
+        
+        // Cmd+Shift+Q: Manual question trigger (global)
+        let manualQuestionHotKey = HotKey(key: .q, modifiers: [.command, .shift])
+        manualQuestionHotKey.keyDownHandler = { [weak self] in
+            self?.triggerManualQuestion()
         }
+        hotKeys.append(manualQuestionHotKey)
+        
+        // Left arrow: Previous (only when overlay is key)
+        let leftArrowHotKey = HotKey(key: .leftArrow, modifiers: [])
+        leftArrowHotKey.keyDownHandler = { [weak self] in
+            guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
+            self.qaManager.goToPrevious()
+        }
+        hotKeys.append(leftArrowHotKey)
+        
+        // Right arrow: Next (only when overlay is key)
+        let rightArrowHotKey = HotKey(key: .rightArrow, modifiers: [])
+        rightArrowHotKey.keyDownHandler = { [weak self] in
+            guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
+            self.qaManager.goToNext()
+        }
+        hotKeys.append(rightArrowHotKey)
+        
+        // Cmd+Up: First (only when overlay is key)
+        let cmdUpHotKey = HotKey(key: .upArrow, modifiers: [.command])
+        cmdUpHotKey.keyDownHandler = { [weak self] in
+            guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
+            self.qaManager.goToFirst()
+        }
+        hotKeys.append(cmdUpHotKey)
+        
+        // Cmd+Down: Last (only when overlay is key)
+        let cmdDownHotKey = HotKey(key: .downArrow, modifiers: [.command])
+        cmdDownHotKey.keyDownHandler = { [weak self] in
+            guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
+            self.qaManager.goToLast()
+        }
+        hotKeys.append(cmdDownHotKey)
     }
     
     func triggerManualQuestion() {
@@ -296,8 +312,8 @@ class AppCoordinator: ObservableObject {
     }
     
     private func getAnswer(for item: QAItem) async {
-        guard isRunning, let perplexityService = perplexityService else {
-            print("❌ No Perplexity service available or app stopped")
+        guard isRunning, let llmService = llmService else {
+            print("❌ No LLM service available or app stopped")
             qaManager.updateAnswer(for: item.id, answer: "Error: Missing API key or app stopped")
             return
         }
@@ -309,7 +325,7 @@ class AppCoordinator: ObservableObject {
             guard isRunning else { return }
             qaManager.updateAnswer(for: item.id, answer: "")
 
-            let answer = try await perplexityService.streamAnswer(
+            let answer = try await llmService.streamAnswer(
                 item.question,
                 screenContext: item.screenContext
             ) { chunk in
@@ -323,8 +339,8 @@ class AppCoordinator: ObservableObject {
             qaManager.updateAnswer(for: item.id, answer: answer)
         } catch {
             print("❌ Failed to get answer: \(error)")
-            if let perplexityError = error as? PerplexityError {
-                print("   Error details: \(perplexityError)")
+            if let llmError = error as? LLMError {
+                print("   Error details: \(llmError)")
             }
             guard isRunning else { return }
             qaManager.updateAnswer(for: item.id, answer: "Error: \(error.localizedDescription)")
@@ -349,10 +365,12 @@ class AppCoordinator: ObservableObject {
         window.isReleasedWhenClosed = false
     }
     
-    func updateAPIKey(_ key: String) {
+    func updateAPIKey(_ key: String, for provider: LLMProvider) {
         do {
-            try keychainService.saveAPIKey(key)
-            perplexityService = PerplexityService(apiKey: key)
+            try keychainService.saveAPIKey(key, for: provider)
+            if provider == selectedProvider {
+                rebuildLLMService()
+            }
         } catch {
             print("Failed to update API key: \(error)")
         }

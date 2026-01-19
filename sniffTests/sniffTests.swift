@@ -79,10 +79,10 @@ struct sniffTests {
 
     @Test func perplexityStreamLineParsing() {
         let line = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}"
-        let parsed = PerplexityService.parseStreamLine(line)
+        let parsed = PerplexityService.parseOpenAIStreamLine(line)
         #expect(parsed == "Hello")
 
-        let done = PerplexityService.parseStreamLine("data: [DONE]")
+        let done = PerplexityService.parseOpenAIStreamLine("data: [DONE]")
         #expect(done == "[DONE]")
     }
     

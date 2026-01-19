@@ -10,9 +10,8 @@ import Security
 
 class KeychainService {
     private let service = "com.loopbacklabs.sniff"
-    private let apiKeyKey = "perplexity_api_key"
     
-    func saveAPIKey(_ key: String) throws {
+    func saveAPIKey(_ key: String, for provider: LLMProvider) throws {
         guard let data = key.data(using: .utf8) else {
             throw KeychainError.dataConversionFailed
         }
@@ -20,7 +19,7 @@ class KeychainService {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: apiKeyKey,
+            kSecAttrAccount as String: provider.keychainKey,
             kSecValueData as String: data
         ]
         
@@ -32,11 +31,11 @@ class KeychainService {
         }
     }
     
-    func getAPIKey() -> String? {
+    func getAPIKey(for provider: LLMProvider) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: apiKeyKey,
+            kSecAttrAccount as String: provider.keychainKey,
             kSecReturnData as String: true
         ]
         
@@ -52,11 +51,11 @@ class KeychainService {
         return key
     }
     
-    func deleteAPIKey() throws {
+    func deleteAPIKey(for provider: LLMProvider) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: apiKeyKey
+            kSecAttrAccount as String: provider.keychainKey
         ]
         
         let status = SecItemDelete(query as CFDictionary)

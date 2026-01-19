@@ -1,15 +1,13 @@
 //
-//  PerplexityService.swift
+//  OpenAIService.swift
 //  sniff
-//
-//  Created by Piyushh Bhutoria on 15/01/26.
 //
 
 import Foundation
 
-class PerplexityService: LLMService {
+class OpenAIService: LLMService {
     private let apiKey: String
-    private let baseURL = "https://api.perplexity.ai/chat/completions"
+    private let baseURL = "https://api.openai.com/v1/chat/completions"
     
     init(apiKey: String) {
         self.apiKey = apiKey
@@ -26,7 +24,7 @@ class PerplexityService: LLMService {
         }
 
         let requestBody: [String: Any] = [
-            "model": "sonar",
+            "model": "gpt-4o",
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": question]
@@ -62,7 +60,7 @@ class PerplexityService: LLMService {
         var collected = ""
 
         for try await line in bytes.lines {
-            guard let delta = Self.parseOpenAIStreamLine(line) else { continue }
+            guard let delta = Self.parseStreamLine(line) else { continue }
             if delta == "[DONE]" {
                 break
             }
@@ -75,7 +73,7 @@ class PerplexityService: LLMService {
         return collected
     }
 
-    static func parseOpenAIStreamLine(_ line: String) -> String? {
+    private static func parseStreamLine(_ line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("data:") else { return nil }
         let payload = trimmed.replacingOccurrences(of: "data:", with: "").trimmingCharacters(in: .whitespaces)
@@ -86,20 +84,12 @@ class PerplexityService: LLMService {
         guard let data = payload.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
-              let firstChoice = choices.first else {
+              let firstChoice = choices.first,
+              let delta = firstChoice["delta"] as? [String: Any],
+              let content = delta["content"] as? String else {
             return nil
         }
 
-        if let delta = firstChoice["delta"] as? [String: Any],
-           let content = delta["content"] as? String {
-            return content
-        }
-
-        if let message = firstChoice["message"] as? [String: Any],
-           let content = message["content"] as? String {
-            return content
-        }
-
-        return nil
+        return content
     }
 }

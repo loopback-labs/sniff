@@ -11,19 +11,16 @@ struct OverlayContentView: View {
     @ObservedObject var qaManager: QAManager
     
     var body: some View {
-        GeometryReader { geometry in
-            VStack(spacing: 0) {
-                if let currentItem = qaManager.currentItem {
-                    QADisplayView(item: currentItem)
-                        .frame(minWidth: 380, maxWidth: min(geometry.size.width - 16, 800))
-                        .padding(8)
-                } else {
-                    emptyStateView
-                }
-                
-                if qaManager.items.count > 1 {
-                    navigationControls
-                }
+        VStack(spacing: 0) {
+            if let currentItem = qaManager.currentItem {
+                QADisplayView(item: currentItem)
+                    .padding(8)
+            } else {
+                emptyStateView
+            }
+            
+            if qaManager.items.count > 1 {
+                navigationControls
             }
         }
     }
@@ -42,8 +39,8 @@ struct OverlayContentView: View {
                 .foregroundColor(qaManager.items.isEmpty ? .secondary : .blue)
         }
         .padding(12)
-        .frame(minWidth: 200)
-        .overlayCardStyle()
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.8))
     }
     
     private var navigationControls: some View {
@@ -75,6 +72,5 @@ struct OverlayContentView: View {
         }
         .buttonStyle(.plain)
         .padding(8)
-        .overlayCardStyle()
     }
 }

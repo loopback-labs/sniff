@@ -19,53 +19,59 @@ struct QADisplayView: View {
     }
     
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                headerRow(icon: "questionmark.circle.fill", color: .blue, title: "Question")
-                Text(item.question)
-                    .font(.system(size: 13))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                
-                Divider()
-                
-                HStack {
-                    headerRow(icon: "bubble.left.and.bubble.right.fill", color: .green, title: "Answer")
-                    if isLoading {
-                        ProgressView()
-                            .scaleEffect(0.6)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "questionmark.circle.fill")
+                    .foregroundColor(.blue)
+                Text("Question")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(item.question)
+                        .font(.system(size: 12))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    
+                    Divider()
+                    
+                    HStack {
+                        Image(systemName: "bubble.left.and.bubble.right.fill")
+                            .foregroundColor(.green)
+                        Text("Answer")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        if isLoading {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                        }
+                        Spacer()
+                    }
+                    
+                    if let attributedString = try? AttributedString(markdown: answerText) {
+                        Text(attributedString)
+                            .font(.system(size: 12))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text(answerText)
+                            .font(.system(size: 12))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                
-                if let attributedString = try? AttributedString(markdown: answerText) {
-                    Text(attributedString)
-                        .font(.system(size: 13))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Text(answerText)
-                        .font(.system(size: 13))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
             }
-            .padding(12)
+            .frame(minHeight: 140)
         }
-        .frame(minHeight: 100)
-        .overlayCardStyle()
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.8))
     }
     
-    private func headerRow(icon: String, color: Color, title: String) -> some View {
-        HStack {
-            Image(systemName: icon)
-                .foregroundColor(color)
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Spacer()
-        }
-    }
 }

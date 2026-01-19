@@ -1,15 +1,13 @@
 //
-//  PerplexityService.swift
+//  ClaudeService.swift
 //  sniff
-//
-//  Created by Piyushh Bhutoria on 15/01/26.
 //
 
 import Foundation
 
-class PerplexityService: LLMService {
+class ClaudeService: LLMService {
     private let apiKey: String
-    private let baseURL = "https://api.perplexity.ai/chat/completions"
+    private let baseURL = "https://api.anthropic.com/v1/messages"
     
     init(apiKey: String) {
         self.apiKey = apiKey
@@ -26,13 +24,12 @@ class PerplexityService: LLMService {
         }
 
         let requestBody: [String: Any] = [
-            "model": "sonar",
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1024,
+            "system": systemPrompt,
             "messages": [
-                ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": question]
             ],
-            "max_tokens": 1024,
-            "temperature": 0.2,
             "stream": true
         ]
 
@@ -43,7 +40,8 @@ class PerplexityService: LLMService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
 
         guard let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
             throw LLMError.serializationFailed
@@ -62,10 +60,7 @@ class PerplexityService: LLMService {
         var collected = ""
 
         for try await line in bytes.lines {
-            guard let delta = Self.parseOpenAIStreamLine(line) else { continue }
-            if delta == "[DONE]" {
-                break
-            }
+            guard let delta = Self.parseStreamLine(line) else { continue }
             if !delta.isEmpty {
                 collected += delta
                 onChunk(delta)
@@ -75,29 +70,20 @@ class PerplexityService: LLMService {
         return collected
     }
 
-    static func parseOpenAIStreamLine(_ line: String) -> String? {
+    private static func parseStreamLine(_ line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("data:") else { return nil }
         let payload = trimmed.replacingOccurrences(of: "data:", with: "").trimmingCharacters(in: .whitespaces)
-        if payload == "[DONE]" {
-            return "[DONE]"
-        }
-
+        
         guard let data = payload.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let firstChoice = choices.first else {
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
 
-        if let delta = firstChoice["delta"] as? [String: Any],
-           let content = delta["content"] as? String {
-            return content
-        }
-
-        if let message = firstChoice["message"] as? [String: Any],
-           let content = message["content"] as? String {
-            return content
+        // Claude uses content_block_delta for streaming
+        if let delta = json["delta"] as? [String: Any],
+           let text = delta["text"] as? String {
+            return text
         }
 
         return nil

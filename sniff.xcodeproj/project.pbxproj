@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		8A8A91B02F1E3AAC00BA66C5 /* HotKey in Frameworks */ = {isa = PBXBuildFile; productRef = 8A8A91AF2F1E3AAC00BA66C5 /* HotKey */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		8A8A90E42F18E5E100BA66C5 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8A8A91B02F1E3AAC00BA66C5 /* HotKey in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = sniff;
 			packageProductDependencies = (
+				8A8A91AF2F1E3AAC00BA66C5 /* HotKey */,
 			);
 			productName = sniff;
 			productReference = 8A8A90D42F18E5DF00BA66C5 /* sniff.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = 8A8A90CB2F18E5DF00BA66C5;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				8A8A91AE2F1E3AAC00BA66C5 /* XCRemoteSwiftPackageReference "HotKey" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8A8A90D52F18E5DF00BA66C5 /* Products */;
 			projectDirPath = "";
@@ -579,6 +588,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		8A8A91AE2F1E3AAC00BA66C5 /* XCRemoteSwiftPackageReference "HotKey" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/soffes/HotKey";
+			requirement = {
+				kind = exactVersion;
+				version = 0.2.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		8A8A91AF2F1E3AAC00BA66C5 /* HotKey */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8A8A91AE2F1E3AAC00BA66C5 /* XCRemoteSwiftPackageReference "HotKey" */;
+			productName = HotKey;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 8A8A90CC2F18E5DF00BA66C5 /* Project object */;
 }
