@@ -18,7 +18,7 @@ class GeminiService: LLMService {
         screenContext: String? = nil,
         onChunk: @escaping (String) -> Void
     ) async throws -> String {
-        var systemPrompt = "You are a helpful assistant that answers questions concisely and accurately."
+        var systemPrompt = "You are a helpful assistant. Answer questions concisely and accurately using Markdown formatting. Use code blocks with language specifiers for code, bullet points for lists, and keep responses brief."
         if let context = screenContext, !context.isEmpty {
             systemPrompt += " Here is the current screen context: \(context)"
         }
@@ -71,6 +71,64 @@ class GeminiService: LLMService {
             }
         }
 
+        return collected
+    }
+
+    func streamAnswerWithImage(
+        prompt: String,
+        imageData: Data,
+        onChunk: @escaping (String) -> Void
+    ) async throws -> String {
+        let base64Image = imageData.base64EncodedString()
+        
+        let requestBody: [String: Any] = [
+            "contents": [
+                [
+                    "role": "user",
+                    "parts": [
+                        ["inline_data": ["mime_type": "image/jpeg", "data": base64Image]],
+                        ["text": prompt]
+                    ]
+                ]
+            ],
+            "generationConfig": [
+                "maxOutputTokens": 1024,
+                "temperature": 0.2
+            ]
+        ]
+        
+        guard let url = URL(string: "\(baseURL)?key=\(apiKey)&alt=sse") else {
+            throw LLMError.invalidURL
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        guard let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
+            throw LLMError.serializationFailed
+        }
+        request.httpBody = httpBody
+        
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw LLMError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw LLMError.httpError(httpResponse.statusCode)
+        }
+        
+        var collected = ""
+        
+        for try await line in bytes.lines {
+            guard let delta = Self.parseStreamLine(line) else { continue }
+            if !delta.isEmpty {
+                collected += delta
+                onChunk(delta)
+            }
+        }
+        
         return collected
     }
 

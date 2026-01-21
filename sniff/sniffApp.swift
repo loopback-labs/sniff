@@ -41,7 +41,7 @@ struct MenuBarView: View {
             }) {
                 HStack {
                     Image(systemName: coordinator.isRunning ? "stop.circle.fill" : "play.circle.fill")
-                    Text(coordinator.isRunning ? "Stop" : "Start")
+                    Text(coordinator.isRunning ? "Stop (⌘⇧W)" : "Start (⌘⇧W)")
                 }
             }
             
@@ -50,8 +50,13 @@ struct MenuBarView: View {
             
             Divider()
             
-            Button("Manual Question (⌘⇧Q)") {
-                coordinator.triggerManualQuestion()
+            Button("Screen Question (⌘⇧Q)") {
+                coordinator.triggerScreenQuestion()
+            }
+            .disabled(!coordinator.isRunning)
+            
+            Button("Audio Question (⌘⇧A)") {
+                coordinator.triggerAudioQuestion()
             }
             .disabled(!coordinator.isRunning)
             

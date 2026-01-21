@@ -11,6 +11,7 @@ import Combine
 @MainActor
 final class TranscriptBuffer: ObservableObject {
     @Published private(set) var displayText: String = ""
+    @Published private(set) var latestQuestion: String?
 
     private var lastFullText: String = ""
     private let maxLines: Int
@@ -19,6 +20,10 @@ final class TranscriptBuffer: ObservableObject {
     init(maxLines: Int = 6, maxLineLength: Int = 60) {
         self.maxLines = maxLines
         self.maxLineLength = maxLineLength
+    }
+    
+    func updateLatestQuestion(_ question: String?) {
+        latestQuestion = question
     }
 
     func update(with fullText: String) {
@@ -36,6 +41,7 @@ final class TranscriptBuffer: ObservableObject {
     func clear() {
         displayText = ""
         lastFullText = ""
+        latestQuestion = nil
     }
 
     private func renderTail(from text: String) -> String {

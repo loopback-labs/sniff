@@ -33,6 +33,12 @@ protocol LLMService {
         screenContext: String?,
         onChunk: @escaping (String) -> Void
     ) async throws -> String
+    
+    func streamAnswerWithImage(
+        prompt: String,
+        imageData: Data,
+        onChunk: @escaping (String) -> Void
+    ) async throws -> String
 }
 
 enum LLMError: Error {

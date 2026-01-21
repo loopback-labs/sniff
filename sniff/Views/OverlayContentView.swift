@@ -7,7 +7,22 @@
 
 import SwiftUI
 
-struct OverlayContentView: View {
+// Wrapper that applies config-based styling
+struct QAOverlayContent: View {
+    @ObservedObject var qaManager: QAManager
+    
+    var body: some View {
+        StyledOverlayView(
+            config: .qaOverlay,
+            icon: "questionmark.bubble"
+        ) {
+            QAContentView(qaManager: qaManager)
+        }
+    }
+}
+
+// Pure content view - just the Q&A display logic
+struct QAContentView: View {
     @ObservedObject var qaManager: QAManager
     
     var body: some View {
@@ -26,21 +41,10 @@ struct OverlayContentView: View {
     }
     
     private var emptyStateView: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Image(systemName: "questionmark.bubble")
-                    .foregroundColor(.secondary)
-                Text("Sniff - Ready")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            Text(qaManager.items.isEmpty ? "Waiting for questions..." : "\(qaManager.items.count) question(s) detected")
-                .font(.caption2)
-                .foregroundColor(qaManager.items.isEmpty ? .secondary : .blue)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.8))
+        Text(qaManager.items.isEmpty ? "Waiting for questions..." : "\(qaManager.items.count) question(s) detected")
+            .font(.caption2)
+            .foregroundColor(qaManager.items.isEmpty ? .secondary : .blue)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
     
     private var navigationControls: some View {

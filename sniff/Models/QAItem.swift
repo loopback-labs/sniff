@@ -24,7 +24,4 @@ struct QAItem: Identifiable, Equatable {
         self.screenContext = screenContext
     }
     
-    static func == (lhs: QAItem, rhs: QAItem) -> Bool {
-        lhs.id == rhs.id
-    }
 }

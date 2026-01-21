@@ -6,13 +6,14 @@ Open Source version of cluely. This is a very basic macOS app and highlights the
 
 ## Features
 
-- **Automatic Question Detection**: Detects questions from both screen content and audio transcription (needs enhancement)
+- **Automatic Question Detection**: Detects questions from live audio
 - **Multiple LLM Providers**: Supports OpenAI, Claude (Anthropic), Gemini (Google), and Perplexity
-- **Real-time Transcription**: Captures and transcribes audio in real-time
-- **Screen Capture**: Reads text from your screen to detect questions
-- **Overlay Windows**: Displays answers in non-intrusive overlay windows
-- **Manual Trigger**: Press `⌘⇧Q` to manually trigger question detection
+- **Real-time Transcription**: Live transcript with detected-question highlighting
+- **Screen Question Capture**: Sends a screenshot to the selected provider for visual Q&A
+- **Overlay Windows**: Draggable, resizable, click-through overlays for Q&A and transcript
+- **Manual Triggers**: Dedicated hotkeys for screen and audio questions
 - **Keyboard Navigation**: Navigate through Q&A history with arrow keys
+- **Markdown Answers**: Renders structured answers for readability
 - **Secure API Key Storage**: API keys are stored securely in macOS Keychain
 
 ## Requirements
@@ -64,25 +65,27 @@ open sniff.xcodeproj
 ### Starting the App
 
 1. Click the Sniff icon in the menu bar
-2. Click "Start" to begin capturing
+2. Click "Start" to begin capturing (or press `⌘⇧W`)
 
 ### Automatic Mode
 
-When automatic mode is enabled (default), Sniff will:
-- Monitor screen content for questions
+When automatic mode is enabled, Sniff will:
 - Monitor audio transcription for questions
+- Optionally process screen captures for questions
 - Automatically send detected questions to your selected LLM provider
 - Display answers in the overlay window
 
 ### Manual Mode
 
 1. Disable "Automatic Mode" in the menu bar
-2. Press `⌘⇧Q` to manually trigger question detection
-3. Sniff will use the latest screen content or audio transcription
+2. Press `⌘⇧Q` for a screen question or `⌘⇧A` for an audio question
+3. Sniff will use the latest screenshot or detected audio question
 
 ### Keyboard Shortcuts
 
-- `⌘⇧Q`: Manually trigger question detection (global)
+- `⌘⇧W`: Start/stop capture (global)
+- `⌘⇧Q`: Screen question (global)
+- `⌘⇧A`: Audio question (global)
 - `←`: Navigate to previous Q&A (when overlay is focused)
 - `→`: Navigate to next Q&A (when overlay is focused)
 - `⌘↑`: Jump to first Q&A (when overlay is focused)
@@ -91,7 +94,8 @@ When automatic mode is enabled (default), Sniff will:
 ### Overlay Windows
 
 - **Q&A Window**: Displays detected questions and answers (top-right)
-- **Transcript Window**: Shows real-time audio transcription (top-left)
+- **Transcript Window**: Shows real-time audio transcription (top-left) with question highlighting
+- **Interaction**: Windows are click-through until hovered, then draggable/resizable
 
 You can toggle overlay visibility in screenshots via Settings.
 
@@ -104,15 +108,6 @@ sniff/
 ├── Views/          # SwiftUI views
 └── AppCoordinator.swift  # Main app coordinator
 ```
-
-### Key Components
-
-- **AppCoordinator**: Manages app state and coordinates services
-- **ScreenCaptureService**: Captures and extracts text from screen
-- **AudioCaptureService**: Captures and transcribes audio
-- **QuestionDetectionService**: Detects questions in text
-- **QAManager**: Manages Q&A items and navigation
-- **LLM Services**: Handle communication with various LLM providers
 
 ## Privacy & Security
 
@@ -130,10 +125,6 @@ Sniff requires the following permissions:
 - **Speech Recognition**: To transcribe audio into text
 - **Accessibility**: To register global keyboard shortcuts
 
-## Dependencies
-
-- [HotKey](https://github.com/soffes/HotKey): Global keyboard shortcut handling
-
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
@@ -141,8 +132,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Built with SwiftUI and Swift
-- Uses macOS native APIs for screen capture and audio processing

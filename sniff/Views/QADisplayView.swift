@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Textual
 
 struct QADisplayView: View {
     let item: QAItem
@@ -21,6 +22,7 @@ struct QADisplayView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
+                DragHandleView()
                 Image(systemName: "questionmark.circle.fill")
                     .foregroundColor(.blue)
                 Text("Question")
@@ -52,19 +54,11 @@ struct QADisplayView: View {
                         Spacer()
                     }
                     
-                    if let attributedString = try? AttributedString(markdown: answerText) {
-                        Text(attributedString)
-                            .font(.system(size: 12))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else {
-                        Text(answerText)
-                            .font(.system(size: 12))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    StructuredText(markdown: answerText)
+                        .font(.system(size: 12))
+                        .textual.structuredTextStyle(.gitHub)
+                        .textual.textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .frame(minHeight: 140)
@@ -72,6 +66,10 @@ struct QADisplayView: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(Color(NSColor.controlBackgroundColor).opacity(0.8))
+        .overlay(alignment: .bottomTrailing) {
+            ResizeHandleView()
+                .padding(6)
+        }
     }
     
 }

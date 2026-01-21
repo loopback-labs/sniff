@@ -8,7 +8,6 @@
 import Foundation
 import Combine
 import ScreenCaptureKit
-import Vision
 import AppKit
 import CoreVideo
 
@@ -17,9 +16,10 @@ class ScreenCaptureService: NSObject, ObservableObject {
     private var stream: SCStream?
     private let captureInterval: TimeInterval = 8.0
     private var lastCaptureTime: Date = Date()
-    private let ocrQueue = DispatchQueue(label: "com.sniff.ocrQueue", qos: .userInitiated)
+    private let captureQueue = DispatchQueue(label: "com.sniff.captureQueue", qos: .userInitiated)
+    private let ciContext = CIContext()
     
-    @Published var capturedText: String = ""
+    @Published var capturedImageData: Data?
     @Published var isCapturing: Bool = false
     
     func startCapture() async throws {
@@ -77,30 +77,24 @@ class ScreenCaptureService: NSObject, ObservableObject {
         self.contentFilter = nil
     }
     
-    private func extractText(from imageBuffer: CVImageBuffer) {
-        ocrQueue.async { [weak self] in
+    private func captureImage(from imageBuffer: CVImageBuffer) {
+        let ciImage = CIImage(cvPixelBuffer: imageBuffer)
+        guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
+            print("Failed to create CGImage from buffer")
+            return
+        }
+        
+        let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        guard let tiffData = nsImage.tiffRepresentation,
+              let bitmapRep = NSBitmapImageRep(data: tiffData),
+              let jpegData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.7]) else {
+            print("Failed to convert image to JPEG")
+            return
+        }
+        
+        DispatchQueue.main.async { [weak self] in
             guard let self = self, self.isCapturing else { return }
-            let request = VNRecognizeTextRequest { [weak self] request, error in
-                guard let self = self, self.isCapturing else { return }
-                if let error = error {
-                    print("OCR error: \(error)")
-                    return
-                }
-                guard let observations = request.results as? [VNRecognizedTextObservation] else { return }
-                let recognizedStrings = observations.compactMap { $0.topCandidates(1).first?.string }
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self, self.isCapturing else { return }
-                    self.capturedText = recognizedStrings.joined(separator: " ")
-                }
-            }
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = true
-            let requestHandler = VNImageRequestHandler(cvPixelBuffer: imageBuffer, options: [:])
-            do {
-                try requestHandler.perform([request])
-            } catch {
-                print("Failed to perform OCR: \(error)")
-            }
+            self.capturedImageData = jpegData
         }
     }
 }
@@ -108,18 +102,16 @@ class ScreenCaptureService: NSObject, ObservableObject {
 extension ScreenCaptureService: SCStreamOutput {
     nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        // Throttle and perform OCR off the main actor
-        ocrQueue.async { [weak self] in
+        captureQueue.async { [weak self] in
             guard let self = self, self.isCapturing else { return }
             let now = Date()
             let timeSinceLastCapture = now.timeIntervalSince(self.lastCaptureTime)
             guard timeSinceLastCapture >= self.captureInterval else { return }
-            // Update last capture time on main to keep published state consistent
             DispatchQueue.main.async { [weak self] in
                 guard let self = self, self.isCapturing else { return }
                 self.lastCaptureTime = Date()
             }
-            self.extractText(from: imageBuffer)
+            self.captureImage(from: imageBuffer)
         }
     }
 }

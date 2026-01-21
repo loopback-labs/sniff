@@ -58,6 +58,9 @@ class AudioCaptureService: NSObject, ObservableObject {
         }
         
         recognitionRequest.shouldReportPartialResults = true
+        if #available(macOS 13.0, *) {
+            recognitionRequest.addsPunctuation = true
+        }
         
         recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
             guard let self = self else { return }

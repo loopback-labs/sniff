@@ -118,6 +118,7 @@
 			name = sniff;
 			packageProductDependencies = (
 				8A8A91AF2F1E3AAC00BA66C5 /* HotKey */,
+				8A8E40E92F2150A6000613D6 /* Textual */,
 			);
 			productName = sniff;
 			productReference = 8A8A90D42F18E5DF00BA66C5 /* sniff.app */;
@@ -203,6 +204,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				8A8A91AE2F1E3AAC00BA66C5 /* XCRemoteSwiftPackageReference "HotKey" */,
+				8A8E40E82F2150A6000613D6 /* XCRemoteSwiftPackageReference "textual" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8A8A90D52F18E5DF00BA66C5 /* Products */;
@@ -604,6 +606,14 @@
 				version = 0.2.1;
 			};
 		};
+		8A8E40E82F2150A6000613D6 /* XCRemoteSwiftPackageReference "textual" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gonzalezreal/textual";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.2.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -611,6 +621,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 8A8A91AE2F1E3AAC00BA66C5 /* XCRemoteSwiftPackageReference "HotKey" */;
 			productName = HotKey;
+		};
+		8A8E40E92F2150A6000613D6 /* Textual */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8A8E40E82F2150A6000613D6 /* XCRemoteSwiftPackageReference "textual" */;
+			productName = Textual;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
