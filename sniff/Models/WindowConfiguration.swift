@@ -25,7 +25,7 @@ struct WindowConfiguration {
         size: NSSize(width: 600, height: 400),
         position: .topRight,
         backgroundOpacity: 0.8,
-        padding: 12,
+        padding: 30,
         showResizeHandle: true
     )
     
@@ -34,13 +34,13 @@ struct WindowConfiguration {
         size: NSSize(width: 480, height: 160),
         position: .topLeft,
         backgroundOpacity: 0.8,
-        padding: 12,
+        padding: 30,
         showResizeHandle: true
     )
     
     func calculateFrame(for screen: NSScreen) -> NSRect {
         let screenRect = screen.visibleFrame
-        let padding: CGFloat = 20
+        let padding: CGFloat = 30
         let x = position == .topLeft
             ? screenRect.minX + padding
             : screenRect.maxX - size.width - padding

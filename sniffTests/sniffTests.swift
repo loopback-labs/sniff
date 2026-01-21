@@ -15,7 +15,7 @@ struct sniffTests {
     @Test func screenDetectionFindsQuestionsWithPunctuation() {
         let service = QuestionDetectionService()
         let text = "This is a statement. What is this? Another?"
-        let results = service.detectFromScreen(text)
+        let results = service.detectQuestions(in: text)
         
         #expect(results.contains("What is this?"))
         #expect(results.contains("Another?"))
@@ -24,7 +24,7 @@ struct sniffTests {
     @Test func audioDetectionFindsQuestionsWithoutPunctuation() {
         let service = QuestionDetectionService()
         let text = "how does this work please explain the steps"
-        let results = service.detectFromAudio(text)
+        let results = service.detectQuestions(in: text)
         
         #expect(results.contains { $0.lowercased().hasPrefix("how does this work") })
     }
@@ -32,7 +32,7 @@ struct sniffTests {
     @Test func screenDetectionDedupes() {
         let service = QuestionDetectionService()
         let text = "What is this? what is this?"
-        let results = service.detectFromScreen(text)
+        let results = service.detectQuestions(in: text)
         
         #expect(results.count == 1)
     }
@@ -78,12 +78,12 @@ struct sniffTests {
         #expect(lines.joined(separator: " ").contains("seven"))
     }
 
-    @Test func perplexityStreamLineParsing() {
+    @Test func openAIFormatStreamLineParsing() {
         let line = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}"
-        let parsed = PerplexityService.parseOpenAIStreamLine(line)
+        let parsed = BaseLLMService.parseOpenAIFormat(line)
         #expect(parsed == "Hello")
 
-        let done = PerplexityService.parseOpenAIStreamLine("data: [DONE]")
+        let done = BaseLLMService.parseOpenAIFormat("data: [DONE]")
         #expect(done == "[DONE]")
     }
     
@@ -95,18 +95,18 @@ struct sniffTests {
         
         // First update - should detect question
         let firstDelta = processor.consume("what is the weather")
-        let questions1 = detector.detectFromAudio(firstDelta)
+        let questions1 = detector.detectQuestions(in: firstDelta)
         #expect(questions1.count == 1)
         #expect(questions1.first?.lowercased().contains("weather") == true)
         
         // Second update - extending same question, no question words in delta
         let secondDelta = processor.consume("what is the weather today")
-        let questions2 = detector.detectFromAudio(secondDelta)
+        let questions2 = detector.detectQuestions(in: secondDelta)
         #expect(questions2.isEmpty)
         
         // Third update - new question, should detect
         let thirdDelta = processor.consume("what is the weather today how does it work")
-        let questions3 = detector.detectFromAudio(thirdDelta)
+        let questions3 = detector.detectQuestions(in: thirdDelta)
         #expect(questions3.count == 1)
         #expect(questions3.first?.lowercased().contains("how does") == true)
     }
@@ -117,15 +117,15 @@ struct sniffTests {
         
         _ = processor.consume("something")
         let emptyDelta = processor.consume("")
-        #expect(detector.detectFromAudio(emptyDelta).isEmpty)
+        #expect(detector.detectQuestions(in: emptyDelta).isEmpty)
         
         let freshProcessor = TranscriptionDeltaProcessor()
         let firstDelta = freshProcessor.consume("what is this")
-        #expect(detector.detectFromAudio(firstDelta).count == 1)
+        #expect(detector.detectQuestions(in: firstDelta).count == 1)
         
         let emptyProcessor = TranscriptionDeltaProcessor()
         let emptyDelta2 = emptyProcessor.consume("")
-        #expect(detector.detectFromAudio(emptyDelta2).isEmpty)
+        #expect(detector.detectQuestions(in: emptyDelta2).isEmpty)
     }
     
     @Test func deltaDetectionHandlesRecognitionRestart() {
@@ -134,7 +134,7 @@ struct sniffTests {
         
         _ = processor.consume("what is the capital of france")
         let restartDelta = processor.consume("what is the capital")
-        let questions = detector.detectFromAudio(restartDelta)
+        let questions = detector.detectQuestions(in: restartDelta)
         #expect(questions.count == 1)
     }
     

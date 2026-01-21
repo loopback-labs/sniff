@@ -6,33 +6,15 @@
 //
 
 import Foundation
+
 class QuestionDetectionService {
-    private let questionWords = ["what", "who", "when", "where", "why", "how", "which", "whose", "whom"]
+    let questionWords = ["what", "who", "when", "where", "why", "how", "which", "whose", "whom"]
     private let questionVerbs = ["is", "are", "was", "were", "do", "does", "did", "can", "could", "will", "would", "should", "may", "might"]
     
     func detectQuestions(in text: String) -> [String] {
         guard !text.isEmpty else { return [] }
         
-        // Split by sentence endings but preserve question marks
-        var sentences: [String] = []
-        var currentSentence = ""
-        
-        for char in text {
-            currentSentence.append(char)
-            if char == "." || char == "!" || char == "?" || char == "\n" {
-                let trimmed = currentSentence.trimmingCharacters(in: .whitespaces)
-                if !trimmed.isEmpty {
-                    sentences.append(trimmed)
-                }
-                currentSentence = ""
-            }
-        }
-        
-        // Add remaining text
-        if !currentSentence.trimmingCharacters(in: .whitespaces).isEmpty {
-            sentences.append(currentSentence.trimmingCharacters(in: .whitespaces))
-        }
-        
+        let sentences = splitIntoSentences(text)
         var questions: [String] = []
         
         for sentence in sentences {
@@ -42,7 +24,10 @@ class QuestionDetectionService {
             }
         }
 
-        if questions.isEmpty {
+        // Only use fallback if text has no sentence-ending punctuation at all
+        // (indicates incomplete/streaming transcription)
+        let hasPunctuation = text.contains(where: { $0 == "." || $0 == "?" || $0 == "!" })
+        if questions.isEmpty && !hasPunctuation {
             let fallbackQuestions = detectQuestionsWithoutPunctuation(in: text)
             questions.append(contentsOf: fallbackQuestions)
         }
@@ -50,15 +35,34 @@ class QuestionDetectionService {
         return dedupe(questions)
     }
     
-    private func isQuestion(_ text: String) -> Bool {
+    func splitIntoSentences(_ text: String) -> [String] {
+        let pattern = "[.!?]+"
+        var sentences: [String] = []
+        var remaining = text
+        
+        while let range = remaining.range(of: pattern, options: .regularExpression) {
+            let sentence = String(remaining[..<range.upperBound]).trimmingCharacters(in: .whitespaces)
+            if !sentence.isEmpty {
+                sentences.append(sentence)
+            }
+            remaining = String(remaining[range.upperBound...])
+        }
+        
+        let leftover = remaining.trimmingCharacters(in: .whitespaces)
+        if !leftover.isEmpty {
+            sentences.append(leftover)
+        }
+        
+        return sentences
+    }
+    
+    func isQuestion(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         
-        // Check for question mark
         if trimmed.hasSuffix("?") {
             return true
         }
         
-        // Check for question words at the start
         let lowercased = trimmed.lowercased()
         for word in questionWords {
             if lowercased.hasPrefix("\(word) ") || lowercased == word {
@@ -66,7 +70,6 @@ class QuestionDetectionService {
             }
         }
         
-        // Check for question-forming verbs
         for verb in questionVerbs {
             if lowercased.hasPrefix("\(verb) ") {
                 return true
@@ -119,14 +122,6 @@ class QuestionDetectionService {
             }
         }
         return result
-    }
-    
-    func detectFromAudio(_ audioText: String) -> [String] {
-        return detectQuestions(in: audioText)
-    }
-    
-    func detectFromScreen(_ screenText: String) -> [String] {
-        return detectQuestions(in: screenText)
     }
 }
 

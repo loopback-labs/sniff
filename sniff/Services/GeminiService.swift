@@ -5,134 +5,39 @@
 
 import Foundation
 
-class GeminiService: LLMService {
-    private let apiKey: String
-    private let baseURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent"
-    
+class GeminiService: BaseLLMService {
     init(apiKey: String) {
-        self.apiKey = apiKey
+        super.init(apiKey: apiKey, baseURL: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.0-flash:streamGenerateContent")
     }
 
-    func streamAnswer(
-        _ question: String,
-        screenContext: String? = nil,
-        onChunk: @escaping (String) -> Void
-    ) async throws -> String {
-        var systemPrompt = "You are a helpful assistant. Answer questions concisely and accurately using Markdown formatting. Use code blocks with language specifiers for code, bullet points for lists, and keep responses brief."
-        if let context = screenContext, !context.isEmpty {
-            systemPrompt += " Here is the current screen context: \(context)"
-        }
+    override func buildURL() -> URL? {
+        URL(string: "\(baseURL)?key=\(apiKey)&alt=sse")
+    }
 
-        let requestBody: [String: Any] = [
-            "system_instruction": [
-                "parts": [["text": systemPrompt]]
-            ],
-            "contents": [
-                [
-                    "role": "user",
-                    "parts": [["text": question]]
-                ]
-            ],
-            "generationConfig": [
-                "maxOutputTokens": 1024,
-                "temperature": 0.2
-            ]
+    override func buildTextRequestBody(question: String, systemPrompt: String) -> [String: Any] {
+        [
+            "system_instruction": ["parts": [["text": systemPrompt]]],
+            "contents": [["role": "user", "parts": [["text": question]]]],
+            "generationConfig": ["maxOutputTokens": 1024, "temperature": 0.2]
         ]
-
-        guard let url = URL(string: "\(baseURL)?key=\(apiKey)&alt=sse") else {
-            throw LLMError.invalidURL
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        guard let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
-            throw LLMError.serializationFailed
-        }
-        request.httpBody = httpBody
-
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw LLMError.invalidResponse
-        }
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw LLMError.httpError(httpResponse.statusCode)
-        }
-
-        var collected = ""
-
-        for try await line in bytes.lines {
-            guard let delta = Self.parseStreamLine(line) else { continue }
-            if !delta.isEmpty {
-                collected += delta
-                onChunk(delta)
-            }
-        }
-
-        return collected
     }
 
-    func streamAnswerWithImage(
-        prompt: String,
-        imageData: Data,
-        onChunk: @escaping (String) -> Void
-    ) async throws -> String {
-        let base64Image = imageData.base64EncodedString()
-        
-        let requestBody: [String: Any] = [
+    override func buildImageRequestBody(prompt: String, imageData: Data) -> [String: Any] {
+        [
             "contents": [
                 [
                     "role": "user",
                     "parts": [
-                        ["inline_data": ["mime_type": "image/jpeg", "data": base64Image]],
+                        ["inline_data": ["mime_type": "image/jpeg", "data": imageData.base64EncodedString()]],
                         ["text": prompt]
                     ]
                 ]
             ],
-            "generationConfig": [
-                "maxOutputTokens": 1024,
-                "temperature": 0.2
-            ]
+            "generationConfig": ["maxOutputTokens": 1024, "temperature": 0.2]
         ]
-        
-        guard let url = URL(string: "\(baseURL)?key=\(apiKey)&alt=sse") else {
-            throw LLMError.invalidURL
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        guard let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
-            throw LLMError.serializationFailed
-        }
-        request.httpBody = httpBody
-        
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw LLMError.invalidResponse
-        }
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw LLMError.httpError(httpResponse.statusCode)
-        }
-        
-        var collected = ""
-        
-        for try await line in bytes.lines {
-            guard let delta = Self.parseStreamLine(line) else { continue }
-            if !delta.isEmpty {
-                collected += delta
-                onChunk(delta)
-            }
-        }
-        
-        return collected
     }
 
-    private static func parseStreamLine(_ line: String) -> String? {
+    override func parseStreamLine(_ line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("data:") else { return nil }
         let payload = trimmed.replacingOccurrences(of: "data:", with: "").trimmingCharacters(in: .whitespaces)
@@ -144,10 +49,11 @@ class GeminiService: LLMService {
               let content = firstCandidate["content"] as? [String: Any],
               let parts = content["parts"] as? [[String: Any]],
               let firstPart = parts.first,
-              let text = firstPart["text"] as? String else {
-            return nil
-        }
-
+              let text = firstPart["text"] as? String else { return nil }
         return text
+    }
+
+    override func isStreamDone(_ delta: String) -> Bool {
+        false // Gemini doesn't use [DONE]
     }
 }

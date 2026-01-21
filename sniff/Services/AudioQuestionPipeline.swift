@@ -10,11 +10,9 @@ import Foundation
 @MainActor
 class AudioQuestionPipeline {
     private let questionDetectionService: QuestionDetectionService
+    private var lastProcessedQuestions: Set<String> = []
     
-    // Question keywords for fallback when punctuation isn't available
-    private let questionKeywords = ["what", "who", "when", "where", "why", "how", "which", "whose", "whom"]
-    
-    init(questionDetectionService: QuestionDetectionService, windowMaxLength: Int = 500) {
+    init(questionDetectionService: QuestionDetectionService) {
         self.questionDetectionService = questionDetectionService
     }
     
@@ -23,51 +21,31 @@ class AudioQuestionPipeline {
             return (nil, [])
         }
         
-        // Split into sentences (now easy with punctuation from SFSpeechRecognizer)
-        let sentences = splitIntoSentences(transcribedText)
+        // Use the full detection service which handles both punctuated and unpunctuated text
+        let allQuestions = questionDetectionService.detectQuestions(in: transcribedText)
         
-        // Find questions from the last few sentences
-        var questions: [String] = []
-        for sentence in sentences.suffix(3) {
-            if isQuestion(sentence) {
-                questions.append(sentence)
+        // Find only new questions (not previously processed)
+        let newQuestions = allQuestions.filter { !lastProcessedQuestions.contains($0.lowercased()) }
+        
+        // Update processed set
+        for q in allQuestions {
+            lastProcessedQuestions.insert(q.lowercased())
+        }
+        
+        // Limit memory - keep only recent questions
+        if lastProcessedQuestions.count > 50 {
+            lastProcessedQuestions.removeAll()
+            for q in allQuestions.suffix(10) {
+                lastProcessedQuestions.insert(q.lowercased())
             }
         }
         
-        return (questions.last, questions)
+        // Return the latest question from the full text (for highlighting)
+        // and only new questions for auto-processing
+        return (allQuestions.last, newQuestions)
     }
     
-    private func isQuestion(_ sentence: String) -> Bool {
-        let trimmed = sentence.trimmingCharacters(in: .whitespaces)
-        
-        // Primary: ends with "?" (from punctuation)
-        if trimmed.hasSuffix("?") { return true }
-        
-        // Fallback: starts with question word (for partial/unpunctuated text)
-        let firstWord = trimmed.lowercased().split(separator: " ").first.map(String.init) ?? ""
-        return questionKeywords.contains(firstWord)
-    }
-    
-    private func splitIntoSentences(_ text: String) -> [String] {
-        // Split on sentence-ending punctuation
-        let pattern = "[.!?]+"
-        var sentences: [String] = []
-        var remaining = text
-        
-        while let range = remaining.range(of: pattern, options: .regularExpression) {
-            let sentence = String(remaining[..<range.upperBound]).trimmingCharacters(in: .whitespaces)
-            if !sentence.isEmpty {
-                sentences.append(sentence)
-            }
-            remaining = String(remaining[range.upperBound...])
-        }
-        
-        // Add remaining text (incomplete sentence)
-        let leftover = remaining.trimmingCharacters(in: .whitespaces)
-        if !leftover.isEmpty {
-            sentences.append(leftover)
-        }
-        
-        return sentences
+    func reset() {
+        lastProcessedQuestions.removeAll()
     }
 }

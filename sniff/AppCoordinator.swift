@@ -17,7 +17,6 @@ class AppCoordinator: ObservableObject {
     let audioCaptureService = AudioCaptureService()
     let audioDeviceService = AudioDeviceService()
     let questionDetectionService = QuestionDetectionService()
-    let technicalQuestionClassifier = TechnicalQuestionClassifier()
     let qaManager = QAManager()
     let transcriptBuffer = TranscriptBuffer()
     let keychainService = KeychainService()
@@ -25,13 +24,12 @@ class AppCoordinator: ObservableObject {
     private var llmService: LLMService?
     private var qaOverlayWindow: NSWindow?
     private var transcriptOverlayWindow: NSWindow?
+    private var settingsWindow: NSWindow?
     private var hotKeys: [HotKey] = []
     private var toggleHotKey: HotKey?
     private var cancellables = Set<AnyCancellable>()
     private var screenCaptureSubscription: AnyCancellable?
-    private let questionDetectionDeltaProcessor = TranscriptionDeltaProcessor()
     private let audioQuestionPipeline: AudioQuestionPipeline
-    private let transcriptUpdateService: TranscriptUpdateService
     
     @Published var isRunning = false
     @Published var automaticMode = false {
@@ -65,9 +63,7 @@ class AppCoordinator: ObservableObject {
         selectedProvider = LLMProvider(rawValue: savedProvider) ?? .perplexity
         showOverlay = UserDefaults.standard.object(forKey: "showOverlay") as? Bool ?? true
         
-        // Initialize services
         audioQuestionPipeline = AudioQuestionPipeline(questionDetectionService: questionDetectionService)
-        transcriptUpdateService = TranscriptUpdateService(transcriptBuffer: transcriptBuffer)
         
         rebuildLLMService()
         applySavedAudioInputDevice()
@@ -108,27 +104,25 @@ class AppCoordinator: ObservableObject {
         // Update transcript display
         audioCaptureService.$transcribedText
             .sink { [weak self] text in
-                self?.transcriptUpdateService.updateDisplay(with: text)
+                self?.transcriptBuffer.update(with: text)
             }
             .store(in: &cancellables)
         
-        // Continuous audio question detection + auto processing (consolidated)
-        // Uses trailing window to handle pauses in speech
+        // Continuous audio question detection + auto processing
         audioCaptureService.$transcribedText
             .debounce(for: .seconds(1), scheduler: RunLoop.main)
             .sink { [weak self] text in
                 guard let self = self, !text.isEmpty else { return }
                 
-                // Process transcribed text through pipeline
                 let result = self.audioQuestionPipeline.process(transcribedText: text)
                 
-                // Always store latest question for manual trigger
+                // Always update the latest question (even if nil to clear old highlights)
                 if let latestQuestion = result.latestQuestion {
                     print("🔍 Detected audio question: \(latestQuestion.prefix(50))...")
-                    self.transcriptUpdateService.updateLatestQuestion(latestQuestion)
                 }
+                self.transcriptBuffer.updateLatestQuestion(result.latestQuestion)
                 
-                // If auto mode is on, process all detected questions
+                // Process new questions in auto mode
                 if self.automaticMode {
                     for question in result.questions {
                         self.processQuestion(question, source: .audio, screenContext: nil)
@@ -166,8 +160,8 @@ class AppCoordinator: ObservableObject {
             return
         }
         
-        questionDetectionDeltaProcessor.reset()
         transcriptBuffer.clear()
+        audioQuestionPipeline.reset()
         setupSubscriptions()
         await requestPermissions()
         
@@ -266,37 +260,44 @@ class AppCoordinator: ObservableObject {
         }
         hotKeys.append(audioQuestionHotKey)
         
-        // Left arrow: Previous (only when overlay is key)
-        let leftArrowHotKey = HotKey(key: .leftArrow, modifiers: [])
-        leftArrowHotKey.keyDownHandler = { [weak self] in
+        // Cmd+Shift+M: Toggle Automatic Mode (global)
+        let toggleAutomaticModeHotKey = HotKey(key: .m, modifiers: [.command, .shift])
+        toggleAutomaticModeHotKey.keyDownHandler = { [weak self] in
+            self?.automaticMode.toggle()
+        }
+        hotKeys.append(toggleAutomaticModeHotKey)
+        
+        // Option+Left arrow: Previous (only when overlay is key)
+        let optionLeftKey = HotKey(key: .leftArrow, modifiers: [.option])
+        optionLeftKey.keyDownHandler = { [weak self] in
             guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
             self.qaManager.goToPrevious()
         }
-        hotKeys.append(leftArrowHotKey)
+        hotKeys.append(optionLeftKey)
         
-        // Right arrow: Next (only when overlay is key)
-        let rightArrowHotKey = HotKey(key: .rightArrow, modifiers: [])
-        rightArrowHotKey.keyDownHandler = { [weak self] in
+        // Option+Right arrow: Next (only when overlay is key)
+        let optionRightKey = HotKey(key: .rightArrow, modifiers: [.option])
+        optionRightKey.keyDownHandler = { [weak self] in
             guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
             self.qaManager.goToNext()
         }
-        hotKeys.append(rightArrowHotKey)
+        hotKeys.append(optionRightKey)
         
-        // Cmd+Up: First (only when overlay is key)
-        let cmdUpHotKey = HotKey(key: .upArrow, modifiers: [.command])
-        cmdUpHotKey.keyDownHandler = { [weak self] in
+        // Option+Up: First (only when overlay is key)
+        let optionUpKey = HotKey(key: .upArrow, modifiers: [.option])
+        optionUpKey.keyDownHandler = { [weak self] in
             guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
             self.qaManager.goToFirst()
         }
-        hotKeys.append(cmdUpHotKey)
+        hotKeys.append(optionUpKey)
         
-        // Cmd+Down: Last (only when overlay is key)
-        let cmdDownHotKey = HotKey(key: .downArrow, modifiers: [.command])
-        cmdDownHotKey.keyDownHandler = { [weak self] in
+        // Option+Down: Last (only when overlay is key)
+        let optionDownKey = HotKey(key: .downArrow, modifiers: [.option])
+        optionDownKey.keyDownHandler = { [weak self] in
             guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
             self.qaManager.goToLast()
         }
-        hotKeys.append(cmdDownHotKey)
+        hotKeys.append(optionDownKey)
     }
     
     func triggerScreenQuestion() {
@@ -329,7 +330,7 @@ class AppCoordinator: ObservableObject {
         }
         
         // Try to detect question from audio
-        let audioQuestions = questionDetectionService.detectFromAudio(audioText)
+        let audioQuestions = questionDetectionService.detectQuestions(in: audioText)
         if let question = audioQuestions.first {
             print("   Detected question: \(question.prefix(50))...")
             processQuestion(question, source: .manual, screenContext: nil)
@@ -354,47 +355,9 @@ class AppCoordinator: ObservableObject {
         let prompt = "Solve the problem or answer the question shown in this image. Be concise and accurate."
         print("📺 Processing screen image with prompt")
         let item = qaManager.addQuestion(prompt, source: .screen, screenContext: nil)
-        Task { await getAnswerWithImage(for: item, imageData: imageData) }
+        Task { await getAnswer(for: item, imageData: imageData) }
     }
     
-    private func getAnswerWithImage(for item: QAItem, imageData: Data) async {
-        guard isRunning, let llmService = llmService else {
-            print("❌ No LLM service available or app stopped")
-            qaManager.updateAnswer(for: item.id, answer: "Error: Missing API key or app stopped")
-            return
-        }
-        
-        print("🔍 Requesting answer with image...")
-        
-        do {
-            var buffer = ""
-            guard isRunning else { return }
-            qaManager.updateAnswer(for: item.id, answer: "")
-            
-            let answer = try await llmService.streamAnswerWithImage(
-                prompt: item.question,
-                imageData: imageData
-            ) { chunk in
-                Task { @MainActor in
-                    guard !chunk.isEmpty, self.isRunning else { return }
-                    buffer += chunk
-                    self.qaManager.updateAnswer(for: item.id, answer: buffer)
-                }
-            }
-            
-            print("✅ Answer received: \(answer.prefix(100))...")
-            guard isRunning else { return }
-            qaManager.updateAnswer(for: item.id, answer: answer)
-        } catch {
-            print("❌ Failed to get answer: \(error)")
-            if let llmError = error as? LLMError {
-                print("   Error details: \(llmError)")
-            }
-            guard isRunning else { return }
-            qaManager.updateAnswer(for: item.id, answer: "Error: \(error.localizedDescription)")
-        }
-    }
-
     private func isDuplicateRecent(_ question: String) -> Bool {
         let recentQuestions = qaManager.items.filter {
             abs($0.timestamp.timeIntervalSinceNow) < 30
@@ -402,29 +365,33 @@ class AppCoordinator: ObservableObject {
         return recentQuestions.contains { $0.question.lowercased() == question.lowercased() }
     }
     
-    private func getAnswer(for item: QAItem) async {
+    private func getAnswer(for item: QAItem, imageData: Data? = nil) async {
         guard isRunning, let llmService = llmService else {
             print("❌ No LLM service available or app stopped")
             qaManager.updateAnswer(for: item.id, answer: "Error: Missing API key or app stopped")
             return
         }
         
-        print("🔍 Requesting answer for: \(item.question)")
+        print("🔍 Requesting answer\(imageData != nil ? " with image" : ""): \(item.question.prefix(50))...")
         
         do {
             var buffer = ""
             guard isRunning else { return }
             qaManager.updateAnswer(for: item.id, answer: "")
-
-            let answer = try await llmService.streamAnswer(
-                item.question,
-                screenContext: item.screenContext
-            ) { chunk in
+            
+            let onChunk: (String) -> Void = { chunk in
                 Task { @MainActor in
                     guard !chunk.isEmpty, self.isRunning else { return }
                     buffer += chunk
                     self.qaManager.updateAnswer(for: item.id, answer: buffer)
                 }
+            }
+            
+            let answer: String
+            if let imageData = imageData {
+                answer = try await llmService.streamAnswerWithImage(prompt: item.question, imageData: imageData, onChunk: onChunk)
+            } else {
+                answer = try await llmService.streamAnswer(item.question, screenContext: item.screenContext, onChunk: onChunk)
             }
 
             print("✅ Answer received: \(answer.prefix(100))...")
@@ -441,6 +408,15 @@ class AppCoordinator: ObservableObject {
     }
     
     func showSettingsWindow() {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        
+        // If settings window exists and is visible, just bring it to front
+        if let existingWindow = settingsWindow, existingWindow.isVisible {
+            existingWindow.makeKeyAndOrderFront(nil)
+            existingWindow.orderFrontRegardless()
+            return
+        }
+        
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
             styleMask: [.titled, .closable],
@@ -454,8 +430,10 @@ class AppCoordinator: ObservableObject {
         window.contentView = NSHostingView(rootView: settingsView)
         window.center()
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         
         window.isReleasedWhenClosed = false
+        settingsWindow = window
     }
     
     func updateAPIKey(_ key: String, for provider: LLMProvider) {

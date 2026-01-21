@@ -45,7 +45,7 @@ struct MenuBarView: View {
                 }
             }
             
-            Toggle("Automatic Mode", isOn: $coordinator.automaticMode)
+            Toggle("Automatic Mode (⌘⇧M)", isOn: $coordinator.automaticMode)
                 .disabled(!coordinator.isRunning)
             
             Divider()

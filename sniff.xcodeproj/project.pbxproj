@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		8A8A91B02F1E3AAC00BA66C5 /* HotKey in Frameworks */ = {isa = PBXBuildFile; productRef = 8A8A91AF2F1E3AAC00BA66C5 /* HotKey */; };
+		8AB378232F215946001B6B02 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = 8A8E40E92F2150A6000613D6 /* Textual */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +57,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8AB378232F215946001B6B02 /* Textual in Frameworks */,
 				8A8A91B02F1E3AAC00BA66C5 /* HotKey in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
