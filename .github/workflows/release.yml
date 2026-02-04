@@ -1,0 +1,70 @@
+name: Release macOS DMG
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.1)'
+        required: true
+        type: string
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      
+      - name: Update version in project
+        run: |
+          VERSION="${{ inputs.version }}"
+          # Update MARKETING_VERSION in all build configurations
+          sed -i '' "s/MARKETING_VERSION = .*/MARKETING_VERSION = ${VERSION};/g" sniff.xcodeproj/project.pbxproj
+          # Increment build number (CURRENT_PROJECT_VERSION)
+          BUILD_NUMBER=$(grep -m 1 "CURRENT_PROJECT_VERSION = " sniff.xcodeproj/project.pbxproj | sed 's/.*CURRENT_PROJECT_VERSION = \([0-9]*\);/\1/')
+          NEW_BUILD_NUMBER=$((BUILD_NUMBER + 1))
+          sed -i '' "s/CURRENT_PROJECT_VERSION = .*/CURRENT_PROJECT_VERSION = ${NEW_BUILD_NUMBER};/g" sniff.xcodeproj/project.pbxproj
+          echo "Updated version to ${VERSION} (build ${NEW_BUILD_NUMBER})"
+      
+      - name: Build app
+        run: |
+          xcodebuild -project sniff.xcodeproj \
+            -scheme sniff \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
+      
+      - name: Create DMG
+        run: |
+          VERSION="${{ inputs.version }}"
+          APP_PATH="build/Build/Products/Release/sniff.app"
+          DMG_NAME="Sniff-${VERSION}.dmg"
+          
+          # Create DMG
+          hdiutil create -volname "Sniff" \
+            -srcfolder "${APP_PATH}" \
+            -ov -format UDZO \
+            "${DMG_NAME}"
+          
+          echo "DMG created: ${DMG_NAME}"
+          ls -lh "${DMG_NAME}"
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ inputs.version }}
+          name: Release v${{ inputs.version }}
+          files: Sniff-${{ inputs.version }}.dmg
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

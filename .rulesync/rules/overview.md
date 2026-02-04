@@ -1,10 +1,15 @@
 ---
-root: true
-targets: ["*"]
-description: "Project overview and general development guidelines"
-globs: ["**/*"]
+targets:
+  - '*'
+root: false
+description: Project overview and general development guidelines
+globs:
+  - '**/*'
+cursor:
+  description: Project overview and general development guidelines
+  globs:
+    - '**/*'
 ---
-
 # Project Overview
 
 ## General Guidelines
