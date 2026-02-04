@@ -9,6 +9,11 @@ import Foundation
 
 @MainActor
 class AudioQuestionPipeline {
+    private enum Constants {
+        static let maxProcessedQuestions = 50
+        static let retainedTailCount = 10
+    }
+
     private let questionDetectionService: QuestionDetectionService
     private var lastProcessedQuestions: Set<String> = []
     
@@ -16,28 +21,26 @@ class AudioQuestionPipeline {
         self.questionDetectionService = questionDetectionService
     }
     
-    func process(transcribedText: String) -> (latestQuestion: String?, questions: [String]) {
-        guard !transcribedText.isEmpty else {
+    func process(recentText: String) -> (latestQuestion: String?, questions: [String]) {
+        guard !recentText.isEmpty else {
             return (nil, [])
         }
         
         // Use the full detection service which handles both punctuated and unpunctuated text
-        let allQuestions = questionDetectionService.detectQuestions(in: transcribedText)
+        let allQuestions = questionDetectionService.detectQuestions(in: recentText)
+        let normalizedQuestions = allQuestions.map { questionDetectionService.normalizedKey($0) }
         
         // Find only new questions (not previously processed)
-        let newQuestions = allQuestions.filter { !lastProcessedQuestions.contains($0.lowercased()) }
-        
-        // Update processed set
-        for q in allQuestions {
-            lastProcessedQuestions.insert(q.lowercased())
+        let newQuestions = zip(allQuestions, normalizedQuestions).compactMap { question, normalized in
+            lastProcessedQuestions.contains(normalized) ? nil : question
         }
         
+        // Update processed set
+        lastProcessedQuestions.formUnion(normalizedQuestions)
+        
         // Limit memory - keep only recent questions
-        if lastProcessedQuestions.count > 50 {
-            lastProcessedQuestions.removeAll()
-            for q in allQuestions.suffix(10) {
-                lastProcessedQuestions.insert(q.lowercased())
-            }
+        if lastProcessedQuestions.count > Constants.maxProcessedQuestions {
+            lastProcessedQuestions = Set(normalizedQuestions.suffix(Constants.retainedTailCount))
         }
         
         // Return the latest question from the full text (for highlighting)

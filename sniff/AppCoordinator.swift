@@ -15,6 +15,7 @@ import HotKey
 class AppCoordinator: ObservableObject {
     let screenCaptureService = ScreenCaptureService()
     let audioCaptureService = AudioCaptureService()
+    let localWhisperService = LocalWhisperService()
     let audioDeviceService = AudioDeviceService()
     let questionDetectionService = QuestionDetectionService()
     let qaManager = QAManager()
@@ -30,6 +31,8 @@ class AppCoordinator: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var screenCaptureSubscription: AnyCancellable?
     private let audioQuestionPipeline: AudioQuestionPipeline
+    private let appleDeltaProcessor = TranscriptionDeltaProcessor()
+    private let whisperDeltaProcessor = TranscriptionDeltaProcessor()
     
     @Published var isRunning = false
     @Published var automaticMode = false {
@@ -51,6 +54,14 @@ class AppCoordinator: ObservableObject {
             rebuildLLMService()
         }
     }
+    @Published var selectedSpeechEngine: SpeechEngine {
+        didSet {
+            UserDefaults.standard.set(selectedSpeechEngine.rawValue, forKey: "selectedSpeechEngine")
+            if isRunning {
+                Task { await restartSpeechCapture() }
+            }
+        }
+    }
     @Published var showOverlay: Bool {
         didSet {
             UserDefaults.standard.set(showOverlay, forKey: "showOverlay")
@@ -62,6 +73,8 @@ class AppCoordinator: ObservableObject {
         let savedProvider = UserDefaults.standard.string(forKey: "selectedLLMProvider") ?? LLMProvider.perplexity.rawValue
         selectedProvider = LLMProvider(rawValue: savedProvider) ?? .perplexity
         showOverlay = UserDefaults.standard.object(forKey: "showOverlay") as? Bool ?? true
+        let savedSpeechEngine = UserDefaults.standard.string(forKey: "selectedSpeechEngine") ?? SpeechEngine.apple.rawValue
+        selectedSpeechEngine = SpeechEngine(rawValue: savedSpeechEngine) ?? .apple
         
         audioQuestionPipeline = AudioQuestionPipeline(questionDetectionService: questionDetectionService)
         
@@ -99,22 +112,139 @@ class AppCoordinator: ObservableObject {
             llmService = PerplexityService(apiKey: apiKey)
         }
     }
+
+    private func currentTranscriptPublisher() -> AnyPublisher<String, Never> {
+        switch selectedSpeechEngine {
+        case .apple:
+            return audioCaptureService.$transcribedText.eraseToAnyPublisher()
+        case .whisper:
+            return localWhisperService.$transcribedText.eraseToAnyPublisher()
+        }
+    }
+
+    private func currentTranscribedText() -> String {
+        switch selectedSpeechEngine {
+        case .apple:
+            return audioCaptureService.transcribedText
+        case .whisper:
+            return localWhisperService.transcribedText
+        }
+    }
+
+    private func startSpeechCapture() async throws {
+        switch selectedSpeechEngine {
+        case .apple:
+            try audioCaptureService.startCapture()
+        case .whisper:
+            configureWhisperService()
+            try await localWhisperService.startCapture()
+        }
+    }
+
+    private func stopSpeechCapture() {
+        switch selectedSpeechEngine {
+        case .apple:
+            audioCaptureService.stopCapture()
+        case .whisper:
+            localWhisperService.stopCapture()
+        }
+    }
+
+    private func restartSpeechCapture() async {
+        guard isRunning else { return }
+        stopSpeechCapture()
+        appleDeltaProcessor.reset()
+        whisperDeltaProcessor.reset()
+        localWhisperService.reset()
+        cancellables.removeAll()
+        setupSubscriptions()
+        do {
+            try await startSpeechCapture()
+        } catch {
+            print("Failed to restart speech capture: \(error)")
+        }
+    }
+
+    private func configureWhisperService() {
+        // Get stored paths or auto-detect
+        let storedBinaryPath = UserDefaults.standard.string(forKey: "whisperBinaryPath") ?? ""
+        let storedModelPath = UserDefaults.standard.string(forKey: "whisperModelPath") ?? ""
+        
+        // Use stored path if valid, otherwise auto-detect
+        let binaryPath: String
+        if !storedBinaryPath.isEmpty && LocalWhisperService.validateBinaryPath(storedBinaryPath) {
+            binaryPath = storedBinaryPath
+        } else if let detected = LocalWhisperService.detectBinaryPath() {
+            binaryPath = detected
+        } else {
+            binaryPath = "/opt/homebrew/bin/whisper-stream"
+        }
+        
+        // Use stored model path if exists, otherwise use default
+        let modelPath: String
+        if !storedModelPath.isEmpty && FileManager.default.fileExists(atPath: storedModelPath) {
+            modelPath = storedModelPath
+        } else {
+            modelPath = LocalWhisperService.defaultModelPath()
+        }
+        
+        localWhisperService.configure(binaryPath: binaryPath, modelPath: modelPath)
+    }
+
+    // Legacy bookmark handling removed - using temporary exception entitlements instead
+    private func resolveBookmarkURL(forKey key: String) -> URL? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        var isStale = false
+        do {
+            let url = try URL(
+                resolvingBookmarkData: data,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+            if isStale {
+                let newData = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+                UserDefaults.standard.set(newData, forKey: key)
+            }
+            return url
+        } catch {
+            print("Failed to resolve bookmark \(key): \(error)")
+            return nil
+        }
+    }
     
     private func setupSubscriptions() {
-        // Update transcript display
-        audioCaptureService.$transcribedText
+        let transcriptPublisher = currentTranscriptPublisher()
+            .receive(on: RunLoop.main)
+            .share()
+        let deltaProcessor = (selectedSpeechEngine == .apple) ? appleDeltaProcessor : whisperDeltaProcessor
+        
+        // Append transcript deltas (kept in-memory for tail + persisted to disk)
+        transcriptPublisher
             .sink { [weak self] text in
-                self?.transcriptBuffer.update(with: text)
+                guard let self = self else { return }
+                let delta = deltaProcessor.consume(text)
+                self.transcriptBuffer.append(deltaText: delta)
+            }
+            .store(in: &cancellables)
+        
+        // Refresh display at a lower frequency to avoid UI churn
+        transcriptPublisher
+            .throttle(for: .milliseconds(250), scheduler: RunLoop.main, latest: true)
+            .sink { [weak self] _ in
+                self?.transcriptBuffer.refreshDisplay()
             }
             .store(in: &cancellables)
         
         // Continuous audio question detection + auto processing
-        audioCaptureService.$transcribedText
+        transcriptPublisher
             .debounce(for: .seconds(1), scheduler: RunLoop.main)
-            .sink { [weak self] text in
-                guard let self = self, !text.isEmpty else { return }
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                let recentText = self.transcriptBuffer.recentTextForDetection()
+                guard !recentText.isEmpty else { return }
                 
-                let result = self.audioQuestionPipeline.process(transcribedText: text)
+                let result = self.audioQuestionPipeline.process(recentText: recentText)
                 
                 // Always update the latest question (even if nil to clear old highlights)
                 if let latestQuestion = result.latestQuestion {
@@ -161,6 +291,13 @@ class AppCoordinator: ObservableObject {
         }
         
         transcriptBuffer.clear()
+        appleDeltaProcessor.reset()
+        whisperDeltaProcessor.reset()
+        localWhisperService.reset()
+        let saveURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents")
+            .appendingPathComponent("sniff-transcripts")
+        transcriptBuffer.startSession(saveDirectoryURL: saveURL)
         audioQuestionPipeline.reset()
         setupSubscriptions()
         await requestPermissions()
@@ -173,8 +310,8 @@ class AppCoordinator: ObservableObject {
             if automaticMode {
                 setupScreenCaptureSubscription()
             }
-            
-            try audioCaptureService.startCapture()
+
+            try await startSpeechCapture()
             createQAOverlayWindow()
             createTranscriptOverlayWindow()
             setupKeyboardShortcuts()
@@ -194,7 +331,8 @@ class AppCoordinator: ObservableObject {
         screenCaptureSubscription?.cancel()
         screenCaptureSubscription = nil
         await screenCaptureService.stopCapture()
-        audioCaptureService.stopCapture()
+        stopSpeechCapture()
+        transcriptBuffer.stopSession()
         
         // Clean up hotkeys
         hotKeys.removeAll()
@@ -227,7 +365,7 @@ class AppCoordinator: ObservableObject {
     private func createTranscriptOverlayWindow() {
         let config = WindowConfiguration.transcript
         transcriptOverlayWindow = createWindow(config: config) {
-            TranscriptOverlayContent(transcriptBuffer: transcriptBuffer)
+            TranscriptOverlayContentView(transcriptBuffer: transcriptBuffer)
         }
     }
     
@@ -314,30 +452,32 @@ class AppCoordinator: ObservableObject {
     
     func triggerAudioQuestion() {
         print("🎙️ Audio question triggered")
-        let audioText = audioCaptureService.transcribedText
+        let audioText = currentTranscribedText()
         print("   Audio text: \(audioText.isEmpty ? "empty" : String(audioText.prefix(50)))")
-        
+        guard let question = resolveAudioQuestion(from: audioText) else { return }
+        processQuestion(question, source: .manual, screenContext: nil)
+    }
+
+    private func resolveAudioQuestion(from audioText: String) -> String? {
         // First check if we have a latest detected question
         if let latestQuestion = transcriptBuffer.latestQuestion {
             print("   Using latest detected question: \(latestQuestion.prefix(50))...")
-            processQuestion(latestQuestion, source: .manual, screenContext: nil)
-            return
+            return latestQuestion
         }
-        
+
         guard !audioText.isEmpty else {
             print("⚠️ No audio text available to process as question")
-            return
+            return nil
         }
-        
+
         // Try to detect question from audio
-        let audioQuestions = questionDetectionService.detectQuestions(in: audioText)
-        if let question = audioQuestions.first {
+        if let question = questionDetectionService.firstQuestion(in: audioText) {
             print("   Detected question: \(question.prefix(50))...")
-            processQuestion(question, source: .manual, screenContext: nil)
-        } else {
-            print("   No question detected, using raw audio text as fallback")
-            processQuestion(audioText, source: .manual, screenContext: nil)
+            return question
         }
+
+        print("   No question detected, using raw audio text as fallback")
+        return audioText
     }
     
     private func processQuestion(_ question: String, source: QuestionSource, screenContext: String?) {
@@ -418,7 +558,7 @@ class AppCoordinator: ObservableObject {
         }
         
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 720),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -460,4 +600,3 @@ class AppCoordinator: ObservableObject {
         }
     }
 }
-

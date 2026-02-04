@@ -22,7 +22,7 @@ struct WindowConfiguration {
     // Predefined configs
     static let qaOverlay = WindowConfiguration(
         name: "Q&A",
-        size: NSSize(width: 600, height: 400),
+        size: NSSize(width: 620, height: 600),
         position: .topRight,
         backgroundOpacity: 0.8,
         padding: 30,
@@ -30,11 +30,11 @@ struct WindowConfiguration {
     )
     
     static let transcript = WindowConfiguration(
-        name: "Transcript",
-        size: NSSize(width: 480, height: 160),
+        name: "Transcription",
+        size: NSSize(width: 600, height: 600),
         position: .topLeft,
         backgroundOpacity: 0.8,
-        padding: 30,
+        padding: 12,
         showResizeHandle: true
     )
     

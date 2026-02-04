@@ -58,20 +58,20 @@ struct sniffTests {
     }
 
     @Test func transcriptBufferClearsOnEmptyInput() {
-        let buffer = TranscriptBuffer(maxLines: 3, maxLineLength: 20)
-        buffer.update(with: "Hello world")
+        let buffer = TranscriptBuffer(maxLineLength: 20)
+        appendAndRefresh(buffer, "Hello world")
         #expect(!buffer.displayText.isEmpty)
 
-        buffer.update(with: "   ")
+        buffer.clear()
         #expect(buffer.displayText.isEmpty)
     }
 
     @Test func transcriptBufferWrapsAndCapsLines() {
-        let buffer = TranscriptBuffer(maxLines: 2, maxLineLength: 10)
-        buffer.update(with: "one two three four five six seven")
+        let buffer = TranscriptBuffer(maxLineLength: 10)
+        appendAndRefresh(buffer, "one two three four five six seven")
 
         let lines = buffer.displayText.split(separator: "\n").map(String.init)
-        #expect(lines.count == 2)
+        #expect(lines.count >= 2)
         #expect(lines[0].count <= 10)
         #expect(lines[1].count <= 10)
         #expect(lines.joined(separator: " ").contains("five"))
@@ -165,7 +165,7 @@ struct sniffTests {
     // MARK: - TranscriptBuffer.latestQuestion Tests
     
     @Test func transcriptBufferTracksLatestQuestion() {
-        let buffer = TranscriptBuffer(maxLines: 3, maxLineLength: 20)
+        let buffer = TranscriptBuffer(maxLineLength: 20)
         #expect(buffer.latestQuestion == nil)
         
         buffer.updateLatestQuestion("What is this?")
@@ -176,7 +176,7 @@ struct sniffTests {
     }
     
     @Test func transcriptBufferClearsLatestQuestionOnClear() {
-        let buffer = TranscriptBuffer(maxLines: 3, maxLineLength: 20)
+        let buffer = TranscriptBuffer(maxLineLength: 20)
         buffer.updateLatestQuestion("What is this?")
         #expect(buffer.latestQuestion != nil)
         
@@ -185,9 +185,9 @@ struct sniffTests {
     }
     
     @Test func transcriptBufferLatestQuestionIndependentOfDisplayText() {
-        let buffer = TranscriptBuffer(maxLines: 3, maxLineLength: 20)
+        let buffer = TranscriptBuffer(maxLineLength: 20)
         
-        buffer.update(with: "Hello world this is some text")
+        appendAndRefresh(buffer, "Hello world this is some text")
         #expect(!buffer.displayText.isEmpty)
         #expect(buffer.latestQuestion == nil)
         
@@ -195,7 +195,7 @@ struct sniffTests {
         #expect(!buffer.displayText.isEmpty)
         #expect(buffer.latestQuestion == "What is this?")
         
-        buffer.update(with: "New display text here")
+        appendAndRefresh(buffer, "New display text here")
         #expect(buffer.displayText.contains("New"))
         #expect(buffer.latestQuestion == "What is this?")
     }
@@ -206,7 +206,7 @@ struct sniffTests {
         let service = QuestionDetectionService()
         let pipeline = AudioQuestionPipeline(questionDetectionService: service)
         
-        let result = pipeline.process(transcribedText: "How does async work in JavaScript which is single threaded?")
+        let result = pipeline.process(recentText: "How does async work in JavaScript which is single threaded?")
         
         #expect(result.latestQuestion != nil)
         #expect(result.latestQuestion?.hasSuffix("?") == true)
@@ -217,7 +217,7 @@ struct sniffTests {
         let service = QuestionDetectionService()
         let pipeline = AudioQuestionPipeline(questionDetectionService: service)
         
-        let result = pipeline.process(transcribedText: "I think the answer is obvious.")
+        let result = pipeline.process(recentText: "I think the answer is obvious.")
         
         #expect(result.latestQuestion == nil)
         #expect(result.questions.isEmpty)
@@ -228,7 +228,7 @@ struct sniffTests {
         let pipeline = AudioQuestionPipeline(questionDetectionService: service)
         
         // Partial question without punctuation yet (fallback to keyword)
-        let result = pipeline.process(transcribedText: "What is JavaScript")
+        let result = pipeline.process(recentText: "What is JavaScript")
         
         #expect(result.latestQuestion != nil)
         #expect(result.latestQuestion?.lowercased().hasPrefix("what") == true)
@@ -238,7 +238,7 @@ struct sniffTests {
         let service = QuestionDetectionService()
         let pipeline = AudioQuestionPipeline(questionDetectionService: service)
         
-        let result = pipeline.process(transcribedText: "Hello. How are you?")
+        let result = pipeline.process(recentText: "Hello. How are you?")
         
         #expect(result.latestQuestion == "How are you?")
         #expect(result.questions.count == 1)
@@ -248,7 +248,7 @@ struct sniffTests {
         let service = QuestionDetectionService()
         let pipeline = AudioQuestionPipeline(questionDetectionService: service)
         
-        let result = pipeline.process(transcribedText: "First sentence. What is this? Another statement!")
+        let result = pipeline.process(recentText: "First sentence. What is this? Another statement!")
         
         #expect(result.latestQuestion == "What is this?")
         #expect(result.questions.count == 1)
@@ -258,7 +258,7 @@ struct sniffTests {
         let service = QuestionDetectionService()
         let pipeline = AudioQuestionPipeline(questionDetectionService: service)
         
-        let result = pipeline.process(transcribedText: "What is this? How does it work?")
+        let result = pipeline.process(recentText: "What is this? How does it work?")
         
         #expect(result.questions.count == 2)
         #expect(result.latestQuestion == "How does it work?")
@@ -268,7 +268,7 @@ struct sniffTests {
         let service = QuestionDetectionService()
         let pipeline = AudioQuestionPipeline(questionDetectionService: service)
         
-        let result = pipeline.process(transcribedText: "")
+        let result = pipeline.process(recentText: "")
         
         #expect(result.latestQuestion == nil)
         #expect(result.questions.isEmpty)
@@ -279,7 +279,7 @@ struct sniffTests {
         let pipeline = AudioQuestionPipeline(questionDetectionService: service)
         
         // "which" appears mid-sentence, but ends with period - not a question
-        let result = pipeline.process(transcribedText: "JavaScript which is a language.")
+        let result = pipeline.process(recentText: "JavaScript which is a language.")
         
         #expect(result.latestQuestion == nil)
         #expect(result.questions.isEmpty)
@@ -289,11 +289,11 @@ struct sniffTests {
     
     @Test func highlightingWorksWithPunctuatedQuestionAcrossWrappedLines() {
         // Simulate TranscriptBuffer wrapping behavior
-        let buffer = TranscriptBuffer(maxLines: 6, maxLineLength: 30)
+        let buffer = TranscriptBuffer(maxLineLength: 30)
         
         // Long question that will be wrapped
         let fullText = "How does async functionality work in JavaScript?"
-        buffer.update(with: fullText)
+        appendAndRefresh(buffer, fullText)
         
         // Check displayText contains the question (possibly with line breaks)
         let normalizedDisplay = buffer.displayText.replacingOccurrences(of: "\n", with: " ")
@@ -303,7 +303,7 @@ struct sniffTests {
         // Set the latest question (as pipeline would do)
         let service = QuestionDetectionService()
         let pipeline = AudioQuestionPipeline(questionDetectionService: service)
-        let result = pipeline.process(transcribedText: fullText)
+        let result = pipeline.process(recentText: fullText)
         
         buffer.updateLatestQuestion(result.latestQuestion)
         
@@ -313,10 +313,10 @@ struct sniffTests {
     }
     
     @Test func highlightingPreservesPunctuationInDisplayText() {
-        let buffer = TranscriptBuffer(maxLines: 6, maxLineLength: 60)
+        let buffer = TranscriptBuffer(maxLineLength: 60)
         
         // Multiple sentences with punctuation
-        buffer.update(with: "Hello there. How are you? I am fine.")
+        appendAndRefresh(buffer, "Hello there. How are you? I am fine.")
         
         // Punctuation should be preserved in display text
         #expect(buffer.displayText.contains("."))
@@ -332,10 +332,10 @@ struct sniffTests {
     
     @Test func highlightingHandlesQuestionSpanningMultipleLines() {
         // Buffer with short line length to force wrapping
-        let buffer = TranscriptBuffer(maxLines: 6, maxLineLength: 20)
+        let buffer = TranscriptBuffer(maxLineLength: 20)
         
         let question = "What is the meaning of life?"
-        buffer.update(with: question)
+        appendAndRefresh(buffer, question)
         
         // Should be wrapped across multiple lines
         let lines = buffer.displayText.split(separator: "\n")
@@ -347,6 +347,11 @@ struct sniffTests {
         let normalizedQuestion = question.replacingOccurrences(of: " ", with: " ")
         let normalizedDisplay = buffer.displayText.replacingOccurrences(of: "\n", with: " ")
         #expect(normalizedDisplay == normalizedQuestion)
+    }
+
+    private func appendAndRefresh(_ buffer: TranscriptBuffer, _ text: String) {
+        buffer.append(deltaText: text)
+        buffer.refreshDisplay()
     }
     
     // MARK: - Vision/Image-Based Question Tests
@@ -439,5 +444,183 @@ struct sniffTests {
         #expect(screenItem.source == .screen)
         #expect(manualItem.source == .manual)
     }
-}
 
+    // MARK: - QuestionDetectionService Edge Cases
+
+    @Test func questionDetectionSkipsFallbackWhenPunctuationPresent() {
+        let service = QuestionDetectionService()
+        let text = "This is a statement. Another sentence!"
+        let results = service.detectQuestions(in: text)
+        #expect(results.isEmpty)
+    }
+
+    @Test func questionDetectionSplitsSentencesWithTrailingFragment() {
+        let service = QuestionDetectionService()
+        let sentences = service.splitIntoSentences("Hello. How are you? trailing text")
+        #expect(sentences.count == 3)
+        #expect(sentences[0] == "Hello.")
+        #expect(sentences[1] == "How are you?")
+        #expect(sentences[2] == "trailing text")
+    }
+
+    @Test func questionDetectionFirstQuestionPrefersOrder() {
+        let service = QuestionDetectionService()
+        let first = service.firstQuestion(in: "What is this? How does it work?")
+        #expect(first == "What is this?")
+    }
+
+    // MARK: - TranscriptBuffer Detection/Pruning Tests
+
+    @Test func transcriptBufferRecentTextFiltersOldAndIncludesPending() {
+        let now = Date()
+        let buffer = TranscriptBuffer(
+            maxLineLength: 50,
+            displayWindowSeconds: 60,
+            detectionWindowSeconds: 2
+        )
+
+        buffer.append(deltaText: "Old sentence.", at: now.addingTimeInterval(-10))
+        buffer.append(deltaText: "New sentence.", at: now)
+        buffer.append(deltaText: "pending text", at: now)
+
+        let recent = buffer.recentTextForDetection(now: now)
+        #expect(!recent.contains("Old sentence."))
+        #expect(recent.contains("New sentence."))
+        #expect(recent.contains("pending text"))
+    }
+
+    @Test func transcriptBufferDedupesRecentSentences() {
+        let now = Date()
+        let buffer = TranscriptBuffer(maxLineLength: 50, duplicateWindowSeconds: 5, duplicateCheckCount: 6)
+
+        buffer.append(deltaText: "Hello.", at: now)
+        buffer.append(deltaText: "Hello.", at: now.addingTimeInterval(1))
+        buffer.refreshDisplay()
+
+        #expect(buffer.displayText == "Hello.")
+    }
+
+    @Test func transcriptBufferCapsDisplayLength() {
+        let now = Date()
+        let buffer = TranscriptBuffer(maxLineLength: 100, maxDisplayCharacters: 10)
+        buffer.append(deltaText: "ABCDEFGHIJKLMNOPQRSTUVWXYZ.", at: now)
+        buffer.refreshDisplay()
+
+        #expect(buffer.displayText == "RSTUVWXYZ.")
+        #expect(buffer.displayText.count <= 10)
+    }
+
+    @Test func transcriptBufferWritesSessionFile() throws {
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let buffer = TranscriptBuffer(maxLineLength: 40)
+        buffer.startSession(saveDirectoryURL: tempDir)
+
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        buffer.append(deltaText: "Hello world.", at: now)
+        buffer.append(deltaText: "Another line.", at: now.addingTimeInterval(1))
+        buffer.stopSession()
+
+        let items = try FileManager.default.contentsOfDirectory(atPath: tempDir.path)
+        #expect(items.count == 1)
+        let fileURL = tempDir.appendingPathComponent(items[0])
+        let contents = try String(contentsOf: fileURL)
+        #expect(contents.contains("Hello world."))
+        #expect(contents.contains("Another line."))
+    }
+
+    // MARK: - AudioQuestionPipeline Retention Tests
+
+    @Test func pipelineDoesNotRepeatAlreadyProcessedQuestions() {
+        let service = QuestionDetectionService()
+        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
+
+        let first = pipeline.process(recentText: "What is this?")
+        #expect(first.questions.count == 1)
+
+        let second = pipeline.process(recentText: "What is this?")
+        #expect(second.questions.isEmpty)
+        #expect(second.latestQuestion == "What is this?")
+    }
+
+    @Test func pipelineResetAllowsQuestionAgain() {
+        let service = QuestionDetectionService()
+        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
+
+        _ = pipeline.process(recentText: "What is this?")
+        pipeline.reset()
+        let result = pipeline.process(recentText: "What is this?")
+        #expect(result.questions.count == 1)
+    }
+
+    @Test func pipelineEvictsOldQuestionsWhenOverLimit() {
+        let service = QuestionDetectionService()
+        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
+
+        let questions = (1...55).map { "What is item \($0)?" }
+        let combined = questions.joined(separator: " ")
+        let result = pipeline.process(recentText: combined)
+        #expect(result.questions.count == 55)
+
+        let afterEviction = pipeline.process(recentText: "What is item 1?")
+        #expect(afterEviction.questions.count == 1)
+    }
+
+    // MARK: - QAManager Navigation Tests
+
+    @Test func qaManagerNavigationBoundaries() {
+        let manager = QAManager()
+        #expect(manager.currentItem == nil)
+        #expect(manager.canGoPrevious == false)
+        #expect(manager.canGoNext == false)
+
+        _ = manager.addQuestion("Q1", source: .manual)
+        _ = manager.addQuestion("Q2", source: .manual)
+
+        manager.goToFirst()
+        #expect(manager.currentIndex == 0)
+        manager.goToPrevious()
+        #expect(manager.currentIndex == 0)
+
+        manager.goToLast()
+        #expect(manager.currentIndex == 1)
+        manager.goToNext()
+        #expect(manager.currentIndex == 1)
+    }
+
+    // MARK: - LLM Provider/Service Tests
+
+    @Test func llmProviderMetadata() {
+        #expect(LLMProvider.openai.displayName == "OpenAI")
+        #expect(LLMProvider.gemini.displayName == "Gemini")
+        #expect(LLMProvider.perplexity.keychainKey == "perplexity_api_key")
+        #expect(LLMProvider.allCases.count == 4)
+    }
+
+    @Test func parseOpenAIFormatHandlesMessageContent() {
+        let line = "data: {\"choices\":[{\"message\":{\"content\":\"Hello\"}}]}"
+        let parsed = BaseLLMService.parseOpenAIFormat(line)
+        #expect(parsed == "Hello")
+    }
+
+    @Test func parseOpenAIFormatIgnoresNonDataLines() {
+        let parsed = BaseLLMService.parseOpenAIFormat("event: ping")
+        #expect(parsed == nil)
+    }
+
+    @Test func claudeServiceParsesStreamLine() {
+        let service = ClaudeService(apiKey: "test")
+        let line = "data: {\"delta\":{\"text\":\"Hello\"}}"
+        #expect(service.parseStreamLine(line) == "Hello")
+        #expect(service.isStreamDone("[DONE]") == false)
+    }
+
+    @Test func geminiServiceParsesStreamLineAndBuildURL() {
+        let service = GeminiService(apiKey: "abc123")
+        let line = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi\"}]}}]}"
+        #expect(service.parseStreamLine(line) == "Hi")
+        #expect(service.buildURL()?.absoluteString.contains("key=abc123") == true)
+    }
+}

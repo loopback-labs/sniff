@@ -13,6 +13,7 @@ echo -e "${GREEN}Building Sniff app...${NC}"
 # Get the directory where the script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_PATH="$SCRIPT_DIR/sniff.xcodeproj"
+DERIVED_DATA_PATH="$SCRIPT_DIR/Build/DerivedData"
 
 # Check if Xcode project exists
 if [ ! -d "$PROJECT_PATH" ]; then
@@ -25,6 +26,7 @@ echo -e "${YELLOW}Cleaning and building project...${NC}"
 xcodebuild -project "$PROJECT_PATH" \
     -scheme sniff \
     -configuration Release \
+    -derivedDataPath "$DERIVED_DATA_PATH" \
     clean build
 
 if [ $? -ne 0 ]; then
@@ -34,10 +36,10 @@ fi
 
 echo -e "${GREEN}Build succeeded!${NC}"
 
-# Find the built app
-APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "sniff.app" -path "*/Build/Products/Release/*" 2>/dev/null | head -1)
+# Find the built app from the derived data path we just used
+APP_PATH="$DERIVED_DATA_PATH/Build/Products/Release/sniff.app"
 
-if [ -z "$APP_PATH" ]; then
+if [ ! -d "$APP_PATH" ]; then
     echo -e "${RED}Error: Could not find built app${NC}"
     exit 1
 fi

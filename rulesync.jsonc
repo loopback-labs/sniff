@@ -1,13 +1,15 @@
 {
   "targets": [
     "cursor",
+    "codexcli"
   ],
   "features": [
     "rules",
     "ignore",
     "mcp",
     "commands",
-    "subagents"
+    "subagents",
+    "skills"
   ],
   "baseDirs": [
     "."
@@ -17,5 +19,6 @@
   "global": false,
   "simulateCommands": false,
   "simulateSubagents": false,
+  "simulateSkills": false,
   "modularMcp": true
 }

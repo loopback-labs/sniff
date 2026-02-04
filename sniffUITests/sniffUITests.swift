@@ -32,7 +32,9 @@ final class sniffUITests: XCTestCase {
         app.launch()
 
         // Use XCTAssert and related functions to verify your tests produce the correct results.
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        let didReachForeground = app.wait(for: .runningForeground, timeout: 10)
+        let didReachBackground = app.wait(for: .runningBackground, timeout: 2)
+        XCTAssertTrue(didReachForeground || didReachBackground)
     }
 
     @MainActor

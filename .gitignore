@@ -1,7 +1,11 @@
 # Cursor IDE
 .cursor
 .cursorignore
+# codex
+.codex/
 AGENTS.md
+
+.serena/
 
 # Xcode
 xcuserdata/
@@ -19,3 +23,5 @@ build/
 
 # Swift Package Manager
 .build/
+
+whisper.cpp/

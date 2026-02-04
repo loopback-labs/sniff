@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+// import AppKit
 
 @main
 struct sniffApp: App {
@@ -79,3 +80,4 @@ struct MenuBarView: View {
         .frame(width: 200)
     }
 }
+
