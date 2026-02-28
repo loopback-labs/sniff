@@ -7,10 +7,13 @@
 
 import Foundation
 import Combine
+import Speech
+import CoreMedia
 
 @MainActor
 final class LocalWhisperService: ObservableObject {
-    @Published var transcribedText: String = ""
+    @Published var micTranscribedText: String = ""
+    @Published var systemTranscribedText: String = ""
     @Published var isCapturing: Bool = false
 
     static let availableModelNames: [String] = [
@@ -38,6 +41,10 @@ final class LocalWhisperService: ObservableObject {
         return try! NSRegularExpression(pattern: pattern)
     }()
     
+    private var systemRecognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var systemRecognitionTask: SFSpeechRecognitionTask?
+    private let systemSpeechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    
     private var binaryPath: String = ""
     private var modelPath: String = ""
 
@@ -56,17 +63,14 @@ final class LocalWhisperService: ObservableObject {
         let resolvedBinaryPath = (binaryPath as NSString).expandingTildeInPath
         let resolvedModelPath = (modelPath as NSString).expandingTildeInPath
 
-        // Validate binary exists
         guard FileManager.default.fileExists(atPath: resolvedBinaryPath) else {
             throw LocalWhisperError.binaryNotFound(resolvedBinaryPath)
         }
 
-        // Download model if needed
         if !FileManager.default.fileExists(atPath: resolvedModelPath) {
             try await downloadModel(to: resolvedModelPath)
         }
 
-        // Launch whisper-stream process
         let process = Process()
         process.executableURL = URL(fileURLWithPath: resolvedBinaryPath)
         process.arguments = ["-m", resolvedModelPath, "-l", "en"]
@@ -85,7 +89,7 @@ final class LocalWhisperService: ObservableObject {
         }
 
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            _ = handle.availableData // Consume stderr to prevent blocking
+            _ = handle.availableData
         }
 
         process.terminationHandler = { [weak self] _ in
@@ -99,6 +103,8 @@ final class LocalWhisperService: ObservableObject {
             self.process = process
             self.stdoutPipe = stdoutPipe
             self.stderrPipe = stderrPipe
+            try startSystemAudioRecognition()
+            
             isCapturing = true
         } catch {
             throw LocalWhisperError.launchFailed(error.localizedDescription)
@@ -107,22 +113,73 @@ final class LocalWhisperService: ObservableObject {
 
     func stopCapture() {
         guard isCapturing else { return }
+        
         stdoutPipe?.fileHandleForReading.readabilityHandler = nil
         stderrPipe?.fileHandleForReading.readabilityHandler = nil
         process?.terminate()
         process = nil
         stdoutPipe = nil
         stderrPipe = nil
+        
+        stopSystemAudioRecognition()
+        
         isCapturing = false
     }
 
     func reset() {
-        transcribedText = ""
+        micTranscribedText = ""
+        systemTranscribedText = ""
         outputBuffer = ""
         lastEmittedLine = ""
     }
 
-    // MARK: - Output Processing
+    func appendSystemAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
+        guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
+        systemRecognitionRequest?.appendAudioSampleBuffer(sampleBuffer)
+    }
+
+    // MARK: - System Audio Recognition (Apple Speech)
+
+    private func startSystemAudioRecognition() throws {
+        guard let systemSpeechRecognizer = systemSpeechRecognizer,
+              systemSpeechRecognizer.isAvailable else {
+            print("⚠️ System audio recognition unavailable, will only transcribe microphone")
+            return
+        }
+
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        if #available(macOS 13.0, *) {
+            request.addsPunctuation = true
+        }
+
+        systemRecognitionRequest = request
+
+        systemRecognitionTask = systemSpeechRecognizer.recognitionTask(with: request) { [weak self] result, error in
+            if let error = error {
+                print("System audio recognition error: \(error.localizedDescription)")
+                return
+            }
+
+            guard let result = result else { return }
+            let newText = result.bestTranscription.formattedString
+            guard !newText.isEmpty else { return }
+
+            Task { @MainActor in
+                self?.systemTranscribedText = newText
+                print("📢 [Others] \(newText)")
+            }
+        }
+    }
+
+    private func stopSystemAudioRecognition() {
+        systemRecognitionTask?.cancel()
+        systemRecognitionTask = nil
+        systemRecognitionRequest?.endAudio()
+        systemRecognitionRequest = nil
+    }
+
+    // MARK: - Output Processing (Whisper Stream)
 
     private func consumeOutput(data: Data) {
         guard let chunk = String(data: data, encoding: .utf8), !chunk.isEmpty else { return }
@@ -151,10 +208,10 @@ final class LocalWhisperService: ObservableObject {
         guard !normalized.isEmpty, normalized != normalize(lastEmittedLine) else { return }
 
         lastEmittedLine = text
-        if transcribedText.isEmpty {
-            transcribedText = text
+        if micTranscribedText.isEmpty {
+            micTranscribedText = text
         } else {
-            transcribedText.append(needsSpace(before: text) ? " \(text)" : text)
+            micTranscribedText.append(needsSpace(before: text) ? " \(text)" : text)
         }
     }
 
@@ -177,7 +234,7 @@ final class LocalWhisperService: ObservableObject {
     }
 
     private func needsSpace(before text: String) -> Bool {
-        guard let last = transcribedText.last, let first = text.first else { return false }
+        guard let last = micTranscribedText.last, let first = text.first else { return false }
         return !last.isWhitespace && !first.isWhitespace
     }
 
@@ -256,28 +313,21 @@ final class LocalWhisperService: ObservableObject {
         return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
-    /// Auto-detect whisper-stream binary from common installation locations
     static func detectBinaryPath() -> String? {
         let candidates = [
-            // Homebrew (Apple Silicon)
             "/opt/homebrew/bin/whisper-stream",
-            // Homebrew (Intel)
             "/usr/local/bin/whisper-stream",
-            // Home directory build
             "\(NSHomeDirectory())/whisper.cpp/build/bin/whisper-stream",
-            // Project local build
             "\(NSHomeDirectory())/Desktop/Projects/sniff/whisper.cpp/build/bin/whisper-stream"
         ]
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    /// Validate that a binary path exists and is executable
     static func validateBinaryPath(_ path: String) -> Bool {
         let expanded = (path as NSString).expandingTildeInPath
         return FileManager.default.isExecutableFile(atPath: expanded)
     }
 
-    /// Test that the whisper binary can be executed
     static func testBinary(at path: String) throws {
         let expanded = (path as NSString).expandingTildeInPath
         
@@ -288,19 +338,17 @@ final class LocalWhisperService: ObservableObject {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: expanded)
         process.arguments = ["--help"]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
 
         try process.run()
         process.waitUntilExit()
 
-        if process.terminationStatus != 0 {
-            throw LocalWhisperError.launchFailed("Binary returned exit code \(process.terminationStatus)")
+        guard process.terminationStatus == 0 else {
+            throw LocalWhisperError.launchFailed("Binary test failed with status \(process.terminationStatus)")
         }
     }
 }
-
-// MARK: - Errors
 
 enum LocalWhisperError: Error, LocalizedError {
     case binaryNotFound(String)

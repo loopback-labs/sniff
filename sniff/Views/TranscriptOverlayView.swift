@@ -17,8 +17,8 @@ struct TranscriptOverlayView: View {
 
 #Preview("Transcript Overlay") {
     let buffer = TranscriptBuffer()
-    buffer.append(deltaText: "What is the best way to test a whisper model?")
-    buffer.append(deltaText: "It should stream quickly and be accurate.")
+    buffer.append(deltaText: "What is the best way to test a whisper model?", speaker: .you)
+    buffer.append(deltaText: "It should stream quickly and be accurate.", speaker: .others)
     buffer.updateLatestQuestion("What is the best way to test a whisper model?")
     buffer.refreshDisplay()
     return TranscriptOverlayView(transcriptBuffer: buffer)

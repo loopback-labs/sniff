@@ -9,7 +9,7 @@ class BaseLLMService: LLMService {
     let apiKey: String
     let baseURL: String
     
-    static let defaultSystemPrompt = "You are a helpful assistant. Answer questions concisely and accurately using Markdown formatting. Use code blocks with language specifiers for code, bullet points for lists, and keep responses brief."
+    static let defaultSystemPrompt = "You are a helpful assistant. Answer questions concisely and accurately using Markdown formatting. Use python code blocks for code, bullet points for lists, and keep responses brief."
     
     init(apiKey: String, baseURL: String) {
         self.apiKey = apiKey
@@ -90,11 +90,18 @@ class BaseLLMService: LLMService {
             throw LLMError.invalidResponse
         }
         guard (200...299).contains(httpResponse.statusCode) else {
+            var errorBody = ""
+            for try await line in bytes.lines { errorBody += line }
+            if let data = errorBody.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = json["error"] as? [String: Any],
+               let message = err["message"] as? String {
+                throw LLMError.apiError(message)
+            }
             throw LLMError.httpError(httpResponse.statusCode)
         }
-        
+
         var collected = ""
-        
         for try await line in bytes.lines {
             guard let delta = parseStreamLine(line) else { continue }
             if isStreamDone(delta) { break }
@@ -103,7 +110,6 @@ class BaseLLMService: LLMService {
                 onChunk(delta)
             }
         }
-        
         return collected
     }
     

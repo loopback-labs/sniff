@@ -48,3 +48,15 @@ enum LLMError: Error {
     case httpError(Int)
     case apiError(String)
 }
+
+extension LLMError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL: return "Invalid API endpoint URL."
+        case .serializationFailed: return "Failed to serialize request."
+        case .invalidResponse: return "Invalid response from server."
+        case .httpError(let code): return "HTTP \(code).\(code == 401 ? " Check your API key in Settings." : "")"
+        case .apiError(let message): return message
+        }
+    }
+}

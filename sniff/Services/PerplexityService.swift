@@ -28,23 +28,54 @@ class PerplexityService: BaseLLMService {
         ]
     }
 
-    override func buildImageRequestBody(prompt: String, imageData: Data) -> [String: Any] {
-        let dataURL = "data:image/jpeg;base64,\(imageData.base64EncodedString())"
-        return [
-            "model": "sonar",
-            "messages": [
+    override func streamAnswerWithImage(
+        prompt: String,
+        imageData: Data,
+        onChunk: @escaping (String) -> Void
+    ) async throws -> String {
+        guard let url = URL(string: "https://api.perplexity.ai/v1/responses") else {
+            throw LLMError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let body: [String: Any] = [
+            "model": "openai/gpt-5-mini",
+            "input": [
                 [
                     "role": "user",
                     "content": [
-                        ["type": "text", "text": prompt],
-                        ["type": "image_url", "image_url": ["url": dataURL]]
+                        ["type": "input_text", "text": prompt],
+                        ["type": "input_image", "image_url": "data:image/jpeg;base64,\(imageData.base64EncodedString())"]
                     ]
                 ]
-            ],
-            "max_tokens": 1024,
-            "temperature": 0.2,
-            "stream": true
+            ]
         ]
+        guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else {
+            throw LLMError.serializationFailed
+        }
+        request.httpBody = httpBody
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw LLMError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = json["error"] as? [String: Any],
+               let message = err["message"] as? String {
+                throw LLMError.apiError(message)
+            }
+            throw LLMError.httpError(httpResponse.statusCode)
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let answer = json["output_text"] as? String else {
+            throw LLMError.invalidResponse
+        }
+        onChunk(answer)
+        return answer
     }
 
     override func parseStreamLine(_ line: String) -> String? {

@@ -11,11 +11,26 @@ import Combine
 private struct TranscriptChunk: Equatable {
     let text: String
     let timestamp: Date
+    let speaker: TranscriptSpeaker
+}
+
+struct TranscriptDisplayChunk: Identifiable, Equatable {
+    let id: UUID
+    let text: String
+    let timestamp: Date
+    let speaker: TranscriptSpeaker
+    
+    init(text: String, timestamp: Date, speaker: TranscriptSpeaker) {
+        self.id = UUID()
+        self.text = text
+        self.timestamp = timestamp
+        self.speaker = speaker
+    }
 }
 
 @MainActor
 final class TranscriptBuffer: ObservableObject {
-    @Published private(set) var displayText: String = ""
+    @Published private(set) var displayChunks: [TranscriptDisplayChunk] = []
     @Published private(set) var latestQuestion: String?
 
     private let maxLineLength: Int
@@ -87,7 +102,7 @@ final class TranscriptBuffer: ObservableObject {
         sessionURL = nil
     }
 
-    func append(deltaText: String, at timestamp: Date = Date()) {
+    func append(deltaText: String, speaker: TranscriptSpeaker, at timestamp: Date = Date()) {
         let trimmed = deltaText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -112,7 +127,7 @@ final class TranscriptBuffer: ObservableObject {
 
         for sentence in extraction.sentences {
             guard !isDuplicateRecentSentence(sentence, at: timestamp) else { continue }
-            let chunk = TranscriptChunk(text: sentence, timestamp: timestamp)
+            let chunk = TranscriptChunk(text: sentence, timestamp: timestamp, speaker: speaker)
             tailChunks.append(chunk)
             persist(chunk: chunk)
         }
@@ -120,10 +135,11 @@ final class TranscriptBuffer: ObservableObject {
     }
 
     func refreshDisplay() {
-        let tailText = buildTailText()
-        let wrapped = wrap(text: tailText).joined(separator: "\n")
-        if wrapped != displayText {
-            displayText = wrapped
+        let newChunks = tailChunks.map { chunk in
+            TranscriptDisplayChunk(text: chunk.text, timestamp: chunk.timestamp, speaker: chunk.speaker)
+        }
+        if newChunks != displayChunks {
+            displayChunks = newChunks
         }
     }
 
@@ -146,7 +162,7 @@ final class TranscriptBuffer: ObservableObject {
     }
     
     func clear() {
-        displayText = ""
+        displayChunks = []
         latestQuestion = nil
         tailChunks.removeAll()
         pendingText = ""
@@ -272,7 +288,7 @@ final class TranscriptBuffer: ObservableObject {
 
     private func persist(chunk: TranscriptChunk) {
         guard let handle = sessionFileHandle else { return }
-        let line = "[\(isoFormatter.string(from: chunk.timestamp))] \(chunk.text)\n"
+        let line = "[\(isoFormatter.string(from: chunk.timestamp))] \(chunk.speaker.displayLabel) \(chunk.text)\n"
         guard let data = line.data(using: .utf8) else { return }
         handle.write(data)
     }

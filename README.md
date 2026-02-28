@@ -8,7 +8,7 @@ Open Source version of cluely. This is a very basic macOS app and highlights the
 
 - **Automatic Question Detection**: Detects questions from live audio
 - **Multiple LLM Providers**: Supports OpenAI, Claude (Anthropic), Gemini (Google), and Perplexity
-- **Real-time Transcription**: Live transcript with detected-question highlighting
+- **Real-time Dual-Source Transcription**: Live transcript from microphone + system audio with speaker labels (`[You]` / `[Others]`)
 - **Screen Question Capture**: Sends a screenshot to the selected provider for visual Q&A
 - **Overlay Windows**: Draggable, resizable, click-through overlays for Q&A and transcript
 - **Manual Triggers**: Dedicated hotkeys for screen and audio questions
@@ -94,7 +94,7 @@ When automatic mode is enabled, Sniff will:
 ### Overlay Windows
 
 - **Q&A Window**: Displays detected questions and answers (top-right)
-- **Transcript Window**: Shows real-time audio transcription (top-left) with question highlighting
+- **Transcript Window**: Shows real-time mic + system transcription with source labels and question highlighting (top-left)
 - **Interaction**: Windows are click-through until hovered, then draggable/resizable
 
 You can toggle overlay visibility in screenshots via Settings.
@@ -121,7 +121,7 @@ sniff/
 Sniff requires the following permissions:
 
 - **Screen Recording**: To read screen content and detect questions
-- **Microphone**: To capture system audio
+- **Microphone**: To capture your voice audio
 - **Speech Recognition**: To transcribe audio into text
 - **Accessibility**: To register global keyboard shortcuts
 

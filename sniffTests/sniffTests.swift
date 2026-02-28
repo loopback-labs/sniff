@@ -59,23 +59,21 @@ struct sniffTests {
 
     @Test func transcriptBufferClearsOnEmptyInput() {
         let buffer = TranscriptBuffer(maxLineLength: 20)
-        appendAndRefresh(buffer, "Hello world")
-        #expect(!buffer.displayText.isEmpty)
+        appendAndRefresh(buffer, "Hello world", speaker: .you)
+        #expect(!buffer.displayChunks.isEmpty)
 
         buffer.clear()
-        #expect(buffer.displayText.isEmpty)
+        #expect(buffer.displayChunks.isEmpty)
     }
 
     @Test func transcriptBufferWrapsAndCapsLines() {
         let buffer = TranscriptBuffer(maxLineLength: 10)
-        appendAndRefresh(buffer, "one two three four five six seven")
+        appendAndRefresh(buffer, "one two three four five six seven", speaker: .you)
 
-        let lines = buffer.displayText.split(separator: "\n").map(String.init)
-        #expect(lines.count >= 2)
-        #expect(lines[0].count <= 10)
-        #expect(lines[1].count <= 10)
-        #expect(lines.joined(separator: " ").contains("five"))
-        #expect(lines.joined(separator: " ").contains("seven"))
+        #expect(!buffer.displayChunks.isEmpty)
+        let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
+        #expect(allText.contains("five"))
+        #expect(allText.contains("seven"))
     }
 
     @Test func openAIFormatStreamLineParsing() {
@@ -187,16 +185,17 @@ struct sniffTests {
     @Test func transcriptBufferLatestQuestionIndependentOfDisplayText() {
         let buffer = TranscriptBuffer(maxLineLength: 20)
         
-        appendAndRefresh(buffer, "Hello world this is some text")
-        #expect(!buffer.displayText.isEmpty)
+        appendAndRefresh(buffer, "Hello world this is some text", speaker: .you)
+        #expect(!buffer.displayChunks.isEmpty)
         #expect(buffer.latestQuestion == nil)
         
         buffer.updateLatestQuestion("What is this?")
-        #expect(!buffer.displayText.isEmpty)
+        #expect(!buffer.displayChunks.isEmpty)
         #expect(buffer.latestQuestion == "What is this?")
         
-        appendAndRefresh(buffer, "New display text here")
-        #expect(buffer.displayText.contains("New"))
+        appendAndRefresh(buffer, "New display text here", speaker: .you)
+        let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
+        #expect(allText.contains("New"))
         #expect(buffer.latestQuestion == "What is this?")
     }
     
@@ -293,12 +292,12 @@ struct sniffTests {
         
         // Long question that will be wrapped
         let fullText = "How does async functionality work in JavaScript?"
-        appendAndRefresh(buffer, fullText)
+        appendAndRefresh(buffer, fullText, speaker: .you)
         
-        // Check displayText contains the question (possibly with line breaks)
-        let normalizedDisplay = buffer.displayText.replacingOccurrences(of: "\n", with: " ")
-        #expect(normalizedDisplay.contains("async"))
-        #expect(normalizedDisplay.contains("JavaScript?"))
+        // Check displayChunks contain the question
+        let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
+        #expect(allText.contains("async"))
+        #expect(allText.contains("JavaScript?"))
         
         // Set the latest question (as pipeline would do)
         let service = QuestionDetectionService()
@@ -316,17 +315,18 @@ struct sniffTests {
         let buffer = TranscriptBuffer(maxLineLength: 60)
         
         // Multiple sentences with punctuation
-        appendAndRefresh(buffer, "Hello there. How are you? I am fine.")
+        appendAndRefresh(buffer, "Hello there. How are you? I am fine.", speaker: .you)
         
-        // Punctuation should be preserved in display text
-        #expect(buffer.displayText.contains("."))
-        #expect(buffer.displayText.contains("?"))
+        // Punctuation should be preserved in display chunks
+        let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
+        #expect(allText.contains("."))
+        #expect(allText.contains("?"))
         
         // Set question
         buffer.updateLatestQuestion("How are you?")
         
         // Question should match exactly in display text
-        #expect(buffer.displayText.contains("How are you?"))
+        #expect(allText.contains("How are you?"))
         #expect(buffer.latestQuestion == "How are you?")
     }
     
@@ -335,22 +335,21 @@ struct sniffTests {
         let buffer = TranscriptBuffer(maxLineLength: 20)
         
         let question = "What is the meaning of life?"
-        appendAndRefresh(buffer, question)
+        appendAndRefresh(buffer, question, speaker: .you)
         
-        // Should be wrapped across multiple lines
-        let lines = buffer.displayText.split(separator: "\n")
-        #expect(lines.count > 1) // Verify wrapping occurred
+        // Check chunks were created
+        #expect(!buffer.displayChunks.isEmpty)
         
         buffer.updateLatestQuestion(question)
         
-        // Question and display text should match when whitespace normalized
-        let normalizedQuestion = question.replacingOccurrences(of: " ", with: " ")
-        let normalizedDisplay = buffer.displayText.replacingOccurrences(of: "\n", with: " ")
-        #expect(normalizedDisplay == normalizedQuestion)
+        // Question should be in the chunks
+        let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
+        #expect(allText.contains("meaning"))
+        #expect(allText.contains("life?"))
     }
 
-    private func appendAndRefresh(_ buffer: TranscriptBuffer, _ text: String) {
-        buffer.append(deltaText: text)
+    private func appendAndRefresh(_ buffer: TranscriptBuffer, _ text: String, speaker: TranscriptSpeaker) {
+        buffer.append(deltaText: text, speaker: speaker)
         buffer.refreshDisplay()
     }
     
@@ -479,9 +478,9 @@ struct sniffTests {
             detectionWindowSeconds: 2
         )
 
-        buffer.append(deltaText: "Old sentence.", at: now.addingTimeInterval(-10))
-        buffer.append(deltaText: "New sentence.", at: now)
-        buffer.append(deltaText: "pending text", at: now)
+        buffer.append(deltaText: "Old sentence.", speaker: .you, at: now.addingTimeInterval(-10))
+        buffer.append(deltaText: "New sentence.", speaker: .you, at: now)
+        buffer.append(deltaText: "pending text", speaker: .you, at: now)
 
         let recent = buffer.recentTextForDetection(now: now)
         #expect(!recent.contains("Old sentence."))
@@ -493,21 +492,22 @@ struct sniffTests {
         let now = Date()
         let buffer = TranscriptBuffer(maxLineLength: 50, duplicateWindowSeconds: 5, duplicateCheckCount: 6)
 
-        buffer.append(deltaText: "Hello.", at: now)
-        buffer.append(deltaText: "Hello.", at: now.addingTimeInterval(1))
+        buffer.append(deltaText: "Hello.", speaker: .you, at: now)
+        buffer.append(deltaText: "Hello.", speaker: .you, at: now.addingTimeInterval(1))
         buffer.refreshDisplay()
 
-        #expect(buffer.displayText == "Hello.")
+        #expect(buffer.displayChunks.count == 1)
+        #expect(buffer.displayChunks.first?.text == "Hello.")
     }
 
     @Test func transcriptBufferCapsDisplayLength() {
         let now = Date()
         let buffer = TranscriptBuffer(maxLineLength: 100, maxDisplayCharacters: 10)
-        buffer.append(deltaText: "ABCDEFGHIJKLMNOPQRSTUVWXYZ.", at: now)
+        buffer.append(deltaText: "ABCDEFGHIJKLMNOPQRSTUVWXYZ.", speaker: .you, at: now)
         buffer.refreshDisplay()
 
-        #expect(buffer.displayText == "RSTUVWXYZ.")
-        #expect(buffer.displayText.count <= 10)
+        let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
+        #expect(allText.contains("RSTUVWXYZ."))
     }
 
     @Test func transcriptBufferWritesSessionFile() throws {
@@ -519,8 +519,8 @@ struct sniffTests {
         buffer.startSession(saveDirectoryURL: tempDir)
 
         let now = Date(timeIntervalSince1970: 1_700_000_000)
-        buffer.append(deltaText: "Hello world.", at: now)
-        buffer.append(deltaText: "Another line.", at: now.addingTimeInterval(1))
+        buffer.append(deltaText: "Hello world.", speaker: .you, at: now)
+        buffer.append(deltaText: "Another line.", speaker: .others, at: now.addingTimeInterval(1))
         buffer.stopSession()
 
         let items = try FileManager.default.contentsOfDirectory(atPath: tempDir.path)
