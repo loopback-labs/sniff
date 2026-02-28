@@ -4,6 +4,8 @@
 
 Open Source version of cluely. This is a very basic macOS app and highlights the challenges of building a app like cluely to help with questions from your screen and audio during an interview.
 
+user-facing name: **SystemUISyncAgent** in Activity Monitor / Login Items
+
 ## Features
 
 - **Automatic Question Detection**: Detects questions from live audio
@@ -39,6 +41,12 @@ open sniff.xcodeproj
 
 3. Build and run the project (⌘R)
 
+You can also install to `/Applications` using the build script:
+```bash
+./build-and-install.sh
+```
+This produces `syncsd.app` (display name: SystemUISyncAgent).
+
 4. Grant necessary permissions when prompted:
    - Screen Recording permission
    - Microphone permission
@@ -47,7 +55,7 @@ open sniff.xcodeproj
 
 ## Configuration
 
-1. Click the Sniff icon in the menu bar
+1. Click the SystemUISyncAgent icon in the menu bar
 2. Click "Settings..."
 3. Select your preferred LLM provider
 4. Enter your API key for the selected provider
@@ -64,12 +72,12 @@ open sniff.xcodeproj
 
 ### Starting the App
 
-1. Click the Sniff icon in the menu bar
+1. Click the SystemUISyncAgent icon in the menu bar
 2. Click "Start" to begin capturing (or press `⌘⇧W`)
 
 ### Automatic Mode
 
-When automatic mode is enabled, Sniff will:
+When automatic mode is enabled, the app will:
 - Monitor audio transcription for questions
 - Optionally process screen captures for questions
 - Automatically send detected questions to your selected LLM provider
@@ -79,7 +87,7 @@ When automatic mode is enabled, Sniff will:
 
 1. Disable "Automatic Mode" in the menu bar
 2. Press `⌘⇧Q` for a screen question or `⌘⇧A` for an audio question
-3. Sniff will use the latest screenshot or detected audio question
+3. The app will use the latest screenshot or detected audio question
 
 ### Keyboard Shortcuts
 
@@ -118,7 +126,7 @@ sniff/
 
 ## Permissions
 
-Sniff requires the following permissions:
+The app requires the following permissions:
 
 - **Screen Recording**: To read screen content and detect questions
 - **Microphone**: To capture your voice audio
