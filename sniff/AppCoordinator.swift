@@ -500,6 +500,19 @@ class AppCoordinator: ObservableObject {
             self.qaManager.goToLast()
         }
         hotKeys.append(optionDownKey)
+
+        // Cmd+Shift+R: Quits the app
+        let quitHotKey = HotKey(key: .r, modifiers: [.command, .shift])
+        quitHotKey.keyDownHandler = { [weak self] in
+            guard let self = self else { return }
+            Task {
+                await self.stop()
+                await MainActor.run {
+                    NSApplication.shared.terminate(nil)
+                }
+            }
+        }
+        hotKeys.append(quitHotKey)
     }
     
     func triggerScreenQuestion() {
