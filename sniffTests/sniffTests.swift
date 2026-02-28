@@ -7,7 +7,7 @@
 
 import Foundation
 import Testing
-@testable import sniff
+@testable import syncsd
 
 @MainActor
 struct sniffTests {
@@ -59,7 +59,7 @@ struct sniffTests {
 
     @Test func transcriptBufferClearsOnEmptyInput() {
         let buffer = TranscriptBuffer(maxLineLength: 20)
-        appendAndRefresh(buffer, "Hello world", speaker: .you)
+        appendAndRefresh(buffer, "Hello world.", speaker: .you)
         #expect(!buffer.displayChunks.isEmpty)
 
         buffer.clear()
@@ -68,7 +68,7 @@ struct sniffTests {
 
     @Test func transcriptBufferWrapsAndCapsLines() {
         let buffer = TranscriptBuffer(maxLineLength: 10)
-        appendAndRefresh(buffer, "one two three four five six seven", speaker: .you)
+        appendAndRefresh(buffer, "one two three four five six seven.", speaker: .you)
 
         #expect(!buffer.displayChunks.isEmpty)
         let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
@@ -185,7 +185,7 @@ struct sniffTests {
     @Test func transcriptBufferLatestQuestionIndependentOfDisplayText() {
         let buffer = TranscriptBuffer(maxLineLength: 20)
         
-        appendAndRefresh(buffer, "Hello world this is some text", speaker: .you)
+        appendAndRefresh(buffer, "Hello world this is some text.", speaker: .you)
         #expect(!buffer.displayChunks.isEmpty)
         #expect(buffer.latestQuestion == nil)
         
@@ -193,7 +193,7 @@ struct sniffTests {
         #expect(!buffer.displayChunks.isEmpty)
         #expect(buffer.latestQuestion == "What is this?")
         
-        appendAndRefresh(buffer, "New display text here", speaker: .you)
+        appendAndRefresh(buffer, "New display text here.", speaker: .you)
         let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
         #expect(allText.contains("New"))
         #expect(buffer.latestQuestion == "What is this?")

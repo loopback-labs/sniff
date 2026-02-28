@@ -31,7 +31,7 @@ struct TranscriptOverlayContentView: View {
                     .padding(.vertical, 4)
                 }
                 .frame(minHeight: 140)
-                .onChange(of: transcriptBuffer.displayChunks.count) { _ in
+                .onChange(of: transcriptBuffer.displayChunks.count) { _, _ in
                     if let lastChunk = transcriptBuffer.displayChunks.last {
                         withAnimation {
                             proxy.scrollTo(lastChunk.id, anchor: .bottom)
