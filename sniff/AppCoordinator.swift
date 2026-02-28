@@ -398,9 +398,12 @@ class AppCoordinator: ObservableObject {
         // Clean up hotkeys
         hotKeys.removeAll()
         
-        qaOverlayWindow?.close()
+        for window in [qaOverlayWindow, transcriptOverlayWindow] {
+            window?.ignoresMouseEvents = true
+            window?.contentView = nil
+            window?.orderOut(nil)
+        }
         qaOverlayWindow = nil
-        transcriptOverlayWindow?.close()
         transcriptOverlayWindow = nil
         
         isRunning = false

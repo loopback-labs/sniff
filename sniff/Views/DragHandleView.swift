@@ -19,23 +19,6 @@ extension EnvironmentValues {
   }
 }
 
-struct InteractiveContentModifier: ViewModifier {
-  @Environment(\.overlayWindow) var window
-
-  func body(content: Content) -> some View {
-    content.onHover { hovering in
-      guard let window = window else { return }
-      window.ignoresMouseEvents = !hovering
-    }
-  }
-}
-
-extension View {
-  func interactiveContent() -> some View {
-    modifier(InteractiveContentModifier())
-  }
-}
-
 struct DragHandleView: View {
   var body: some View {
     DragHandleRepresentable()
@@ -120,7 +103,6 @@ final class DragHandleNSView: NSView {
   }
   
   override func mouseEntered(with event: NSEvent) {
-    window?.ignoresMouseEvents = false
     NSCursor.openHand.set()
   }
   
@@ -244,7 +226,6 @@ final class ResizeHandleNSView: NSView {
   }
   
   override func mouseEntered(with event: NSEvent) {
-    window?.ignoresMouseEvents = false
     imageView.alphaValue = 1.0
     NSCursor.resizeUpDown.set()
   }
