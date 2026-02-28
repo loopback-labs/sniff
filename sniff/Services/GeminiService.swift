@@ -7,7 +7,7 @@ import Foundation
 
 class GeminiService: BaseLLMService {
     init(apiKey: String) {
-        super.init(apiKey: apiKey, baseURL: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.0-flash:streamGenerateContent")
+        super.init(apiKey: apiKey, baseURL: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent")
     }
 
     override func buildURL() -> URL? {
@@ -18,12 +18,13 @@ class GeminiService: BaseLLMService {
         [
             "system_instruction": ["parts": [["text": systemPrompt]]],
             "contents": [["role": "user", "parts": [["text": question]]]],
-            "generationConfig": ["maxOutputTokens": 1024, "temperature": 0.2]
+            "generationConfig": ["maxOutputTokens": 4096, "temperature": 0.2]
         ]
     }
 
     override func buildImageRequestBody(prompt: String, imageData: Data) -> [String: Any] {
         [
+            "system_instruction": ["parts": [["text": Self.defaultSystemPrompt]]],
             "contents": [
                 [
                     "role": "user",
@@ -33,7 +34,7 @@ class GeminiService: BaseLLMService {
                     ]
                 ]
             ],
-            "generationConfig": ["maxOutputTokens": 1024, "temperature": 0.2]
+            "generationConfig": ["maxOutputTokens": 4096, "temperature": 0.2]
         ]
     }
 
@@ -41,13 +42,16 @@ class GeminiService: BaseLLMService {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("data:") else { return nil }
         let payload = trimmed.replacingOccurrences(of: "data:", with: "").trimmingCharacters(in: .whitespaces)
-        
+        guard !payload.isEmpty else { return nil }
+
         guard let data = payload.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let candidates = json["candidates"] as? [[String: Any]],
+              !candidates.isEmpty,
               let firstCandidate = candidates.first,
               let content = firstCandidate["content"] as? [String: Any],
               let parts = content["parts"] as? [[String: Any]],
+              !parts.isEmpty,
               let firstPart = parts.first,
               let text = firstPart["text"] as? String else { return nil }
         return text

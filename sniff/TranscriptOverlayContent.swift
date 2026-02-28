@@ -9,68 +9,96 @@ struct TranscriptOverlayContentView: View {
             icon: "waveform",
             iconColor: .green
         ) {
-            ScrollView {
-                transcriptText
-                    .font(.system(size: 12))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        if transcriptBuffer.displayChunks.isEmpty {
+                            Text("Listening...")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding()
+                        } else {
+                            ForEach(transcriptBuffer.displayChunks) { chunk in
+                                ChatBubbleView(
+                                    chunk: chunk,
+                                    isHighlighted: isChunkHighlighted(chunk)
+                                )
+                                .id(chunk.id)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                }
+                .frame(minHeight: 140)
+                .onChange(of: transcriptBuffer.displayChunks.count) { _, _ in
+                    if let lastChunk = transcriptBuffer.displayChunks.last {
+                        withAnimation {
+                            proxy.scrollTo(lastChunk.id, anchor: .bottom)
+                        }
+                    }
+                }
             }
-            .frame(minHeight: 140)
         }
     }
 
-    @ViewBuilder
-    private var transcriptText: some View {
-        let fullText = transcriptBuffer.displayText
-        if fullText.isEmpty {
-            Text("Listening...")
-        } else if let question = transcriptBuffer.latestQuestion,
-                  let range = findQuestionRange(in: fullText, question: question) {
-            buildHighlightedText(fullText: fullText, highlightRange: range)
-        } else {
-            Text(fullText)
+    private func isChunkHighlighted(_ chunk: TranscriptDisplayChunk) -> Bool {
+        guard let question = transcriptBuffer.latestQuestion else { return false }
+        return chunk.text.localizedCaseInsensitiveContains(question)
+    }
+}
+
+struct ChatBubbleView: View {
+    let chunk: TranscriptDisplayChunk
+    let isHighlighted: Bool
+
+    var body: some View {
+        HStack {
+            if chunk.speaker == .you {
+                Spacer()
+            }
+
+            Text(chunk.text)
+                .font(.system(size: 12))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(backgroundColor)
+                .foregroundColor(textColor)
+                .cornerRadius(12)
+                .textSelection(.enabled)
+                .frame(maxWidth: 280, alignment: alignment)
+
+            if chunk.speaker == .others {
+                Spacer()
+            }
         }
     }
 
-    private func findQuestionRange(in text: String, question: String) -> Range<String.Index>? {
-        if let range = text.range(of: question, options: [.caseInsensitive, .diacriticInsensitive]) {
-            return range
+    private var backgroundColor: Color {
+        if isHighlighted {
+            return Color.yellow.opacity(0.7)
         }
-
-        // Replace (not remove) whitespace characters to keep string length stable for index mapping.
-        let normalizedText = text
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-            .replacingOccurrences(of: "\t", with: " ")
-
-        let normalizedQuestion = question.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let normalizedRange = normalizedText.range(
-            of: normalizedQuestion,
-            options: [.caseInsensitive, .diacriticInsensitive]
-        ) else {
-            return nil
+        switch chunk.speaker {
+        case .you:
+            return Color.green.opacity(0.2)
+        case .others:
+            return Color.blue.opacity(0.15)
         }
-
-        let startOffset = normalizedText.distance(from: normalizedText.startIndex, to: normalizedRange.lowerBound)
-        let endOffset = normalizedText.distance(from: normalizedText.startIndex, to: normalizedRange.upperBound)
-
-        guard let startIndex = text.index(text.startIndex, offsetBy: startOffset, limitedBy: text.endIndex),
-              let endIndex = text.index(text.startIndex, offsetBy: endOffset, limitedBy: text.endIndex),
-              startIndex <= endIndex else {
-            return nil
-        }
-
-        return startIndex..<endIndex
     }
 
-    private func buildHighlightedText(fullText: String, highlightRange: Range<String.Index>) -> Text {
-        var attributedString = AttributedString(fullText)
-        if let attrRange = Range(highlightRange, in: attributedString) {
-            attributedString[attrRange].foregroundColor = .black
-            attributedString[attrRange].backgroundColor = .yellow.opacity(0.7)
+    private var textColor: Color {
+        if isHighlighted {
+            return .black
         }
-        return Text(attributedString)
+        return .primary
+    }
+
+    private var alignment: Alignment {
+        switch chunk.speaker {
+        case .you:
+            return .trailing
+        case .others:
+            return .leading
+        }
     }
 }

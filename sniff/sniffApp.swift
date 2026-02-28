@@ -67,7 +67,7 @@ struct MenuBarView: View {
                 coordinator.showSettingsWindow()
             }
             
-            Button("Quit") {
+            Button("Quit (⌘⇧R)") {
                 Task {
                     await coordinator.stop()
                     await MainActor.run {

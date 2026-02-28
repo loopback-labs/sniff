@@ -24,9 +24,7 @@ class OverlayWindow: NSWindow {
         titlebarAppearsTransparent = true
         styleMask.insert(.resizable)
         
-        // Allow clicks to pass through to apps behind, but tracking areas
-        // in interactive views will set this to false when hovered
-        ignoresMouseEvents = true
+        ignoresMouseEvents = false
         
         setFrame(frame, display: true)
         minSize = config.size

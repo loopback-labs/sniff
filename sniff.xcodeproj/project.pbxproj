@@ -29,7 +29,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		8A8A90D42F18E5DF00BA66C5 /* sniff.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = sniff.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8A8A90D42F18E5DF00BA66C5 /* syncsd.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = syncsd.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8A8A90E32F18E5E100BA66C5 /* sniffTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = sniffTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8A8A90ED2F18E5E100BA66C5 /* sniffUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = sniffUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -92,7 +92,7 @@
 		8A8A90D52F18E5DF00BA66C5 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				8A8A90D42F18E5DF00BA66C5 /* sniff.app */,
+				8A8A90D42F18E5DF00BA66C5 /* syncsd.app */,
 				8A8A90E32F18E5E100BA66C5 /* sniffTests.xctest */,
 				8A8A90ED2F18E5E100BA66C5 /* sniffUITests.xctest */,
 			);
@@ -123,7 +123,7 @@
 				8A8E40E92F2150A6000613D6 /* Textual */,
 			);
 			productName = sniff;
-			productReference = 8A8A90D42F18E5DF00BA66C5 /* sniff.app */;
+			productReference = 8A8A90D42F18E5DF00BA66C5 /* syncsd.app */;
 			productType = "com.apple.product-type.application";
 		};
 		8A8A90E22F18E5E100BA66C5 /* sniffTests */ = {
@@ -419,7 +419,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = sniff/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Sniff;
+				INFOPLIST_KEY_CFBundleDisplayName = SystemUISyncAgent;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -429,7 +429,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.loopbacklabs.sniff;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = syncsd;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -457,7 +457,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = sniff/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Sniff;
+				INFOPLIST_KEY_CFBundleDisplayName = SystemUISyncAgent;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -467,7 +467,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.loopbacklabs.sniff;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = syncsd;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -495,7 +495,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/sniff.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/sniff";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/syncsd.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/syncsd";
 			};
 			name = Debug;
 		};
@@ -516,7 +516,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/sniff.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/sniff";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/syncsd.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/syncsd";
 			};
 			name = Release;
 		};

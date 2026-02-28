@@ -12,6 +12,9 @@ import AppKit
 struct SettingsView: View {
     @EnvironmentObject var coordinator: AppCoordinator
     @State private var apiKey: String = ""
+    @State private var isEditingAPIKey = false
+    @State private var hasStoredAPIKey = false
+    @State private var isViewingAPIKey = false
     @State private var selectedDeviceID: AudioDeviceID = 0
     @State private var showingAlert = false
     @State private var alertMessage = ""
@@ -52,16 +55,52 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("\(coordinator.selectedProvider.displayName) API Key")
                             .font(.headline)
-                        
-                        SecureField("Enter API Key", text: $apiKey)
-                            .textFieldStyle(.roundedBorder)
-                        
-                        HStack {
-                            Button("Save") { saveAPIKey() }
-                                .buttonStyle(.borderedProminent)
-                            
-                            Button("Clear") { clearAPIKey() }
-                                .buttonStyle(.bordered)
+
+                        if hasStoredAPIKey && !isEditingAPIKey {
+                            Group {
+                                if isViewingAPIKey {
+                                    Text(apiKey)
+                                        .font(.system(.body, design: .monospaced))
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(8)
+                                        .background(Color(nsColor: .textBackgroundColor))
+                                        .cornerRadius(6)
+                                } else {
+                                    Text("••••••••••••••••")
+                                        .font(.system(.body, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(8)
+                                }
+                            }
+
+                            HStack {
+                                Button(isViewingAPIKey ? "Hide" : "View") { toggleViewMode() }
+                                    .buttonStyle(.bordered)
+
+                                Button("Edit") { enterEditMode() }
+                                    .buttonStyle(.bordered)
+
+                                Button("Clear") { clearAPIKey() }
+                                    .buttonStyle(.bordered)
+                            }
+                        } else {
+                            SecureField("Enter API Key", text: $apiKey)
+                                .textFieldStyle(.roundedBorder)
+
+                            HStack {
+                                Button("Save") { saveAPIKey() }
+                                    .buttonStyle(.borderedProminent)
+
+                                if hasStoredAPIKey {
+                                    Button("Cancel") { cancelEdit() }
+                                        .buttonStyle(.bordered)
+
+                                    Button("Clear") { clearAPIKey() }
+                                        .buttonStyle(.bordered)
+                                }
+                            }
                         }
                     }
                     
@@ -78,6 +117,10 @@ struct SettingsView: View {
                             }
                         }
                         .pickerStyle(.segmented)
+
+                        Text("Both engines transcribe microphone + system audio by default.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         
                         if coordinator.selectedSpeechEngine == .whisper {
                             whisperSettingsSection
@@ -222,19 +265,45 @@ struct SettingsView: View {
     // MARK: - API Key Management
     
     private func loadAPIKey() {
-        apiKey = keychainService.getAPIKey(for: coordinator.selectedProvider) ?? ""
+        let stored = keychainService.getAPIKey(for: coordinator.selectedProvider)
+        apiKey = stored ?? ""
+        hasStoredAPIKey = stored != nil && !stored!.isEmpty
+        isEditingAPIKey = false
+        isViewingAPIKey = false
     }
-    
+
+    private func enterEditMode() {
+        loadAPIKey()
+        isEditingAPIKey = true
+        isViewingAPIKey = false
+    }
+
+    private func cancelEdit() {
+        loadAPIKey()
+        isEditingAPIKey = false
+    }
+
+    private func toggleViewMode() {
+        if isViewingAPIKey {
+            isViewingAPIKey = false
+        } else {
+            loadAPIKey()
+            isViewingAPIKey = true
+        }
+    }
+
     private func saveAPIKey() {
         guard !apiKey.isEmpty else {
             alertMessage = "API key cannot be empty"
             showingAlert = true
             return
         }
-        
+
         do {
             try keychainService.saveAPIKey(apiKey, for: coordinator.selectedProvider)
             coordinator.updateAPIKey(apiKey, for: coordinator.selectedProvider)
+            hasStoredAPIKey = true
+            isEditingAPIKey = false
             alertMessage = "API key saved successfully"
             showingAlert = true
         } catch {
@@ -242,11 +311,14 @@ struct SettingsView: View {
             showingAlert = true
         }
     }
-    
+
     private func clearAPIKey() {
         do {
             try keychainService.deleteAPIKey(for: coordinator.selectedProvider)
             apiKey = ""
+            hasStoredAPIKey = false
+            isEditingAPIKey = false
+            isViewingAPIKey = false
             coordinator.rebuildLLMService()
             alertMessage = "API key cleared"
             showingAlert = true

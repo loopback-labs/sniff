@@ -9,6 +9,7 @@ import SwiftUI
 import AppKit
 import Combine
 import CoreGraphics
+import CoreMedia
 import HotKey
 
 @MainActor
@@ -31,8 +32,10 @@ class AppCoordinator: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var screenCaptureSubscription: AnyCancellable?
     private let audioQuestionPipeline: AudioQuestionPipeline
-    private let appleDeltaProcessor = TranscriptionDeltaProcessor()
-    private let whisperDeltaProcessor = TranscriptionDeltaProcessor()
+    private let appleMicDeltaProcessor = TranscriptionDeltaProcessor()
+    private let appleSystemDeltaProcessor = TranscriptionDeltaProcessor()
+    private let whisperMicDeltaProcessor = TranscriptionDeltaProcessor()
+    private let whisperSystemDeltaProcessor = TranscriptionDeltaProcessor()
     
     @Published var isRunning = false
     @Published var automaticMode = false {
@@ -113,26 +116,28 @@ class AppCoordinator: ObservableObject {
         }
     }
 
-    private func currentTranscriptPublisher() -> AnyPublisher<String, Never> {
+    private func currentSourcePublishers() -> [(speaker: TranscriptSpeaker, publisher: AnyPublisher<String, Never>)] {
         switch selectedSpeechEngine {
         case .apple:
-            return audioCaptureService.$transcribedText.eraseToAnyPublisher()
+            return [
+                (.you, audioCaptureService.$micTranscribedText.eraseToAnyPublisher()),
+                (.others, audioCaptureService.$systemTranscribedText.eraseToAnyPublisher())
+            ]
         case .whisper:
-            return localWhisperService.$transcribedText.eraseToAnyPublisher()
+            return [
+                (.you, localWhisperService.$micTranscribedText.eraseToAnyPublisher()),
+                (.others, localWhisperService.$systemTranscribedText.eraseToAnyPublisher())
+            ]
         }
     }
 
     private func currentTranscribedText() -> String {
-        switch selectedSpeechEngine {
-        case .apple:
-            return audioCaptureService.transcribedText
-        case .whisper:
-            return localWhisperService.transcribedText
-        }
+        let text = transcriptBuffer.recentTextForDetection()
+        return stripSpeakerLabels(from: text)
     }
 
-    private func startSpeechCapture() async throws {
-        switch selectedSpeechEngine {
+    private func startSpeechCapture(using engine: SpeechEngine) async throws {
+        switch engine {
         case .apple:
             try audioCaptureService.startCapture()
         case .whisper:
@@ -142,24 +147,31 @@ class AppCoordinator: ObservableObject {
     }
 
     private func stopSpeechCapture() {
-        switch selectedSpeechEngine {
-        case .apple:
-            audioCaptureService.stopCapture()
-        case .whisper:
-            localWhisperService.stopCapture()
-        }
+        audioCaptureService.stopCapture()
+        localWhisperService.stopCapture()
     }
 
     private func restartSpeechCapture() async {
         guard isRunning else { return }
+
+        let engineForSystemAudio = selectedSpeechEngine
         stopSpeechCapture()
-        appleDeltaProcessor.reset()
-        whisperDeltaProcessor.reset()
+        resetDeltaProcessors()
+        audioCaptureService.reset()
         localWhisperService.reset()
         cancellables.removeAll()
         setupSubscriptions()
         do {
-            try await startSpeechCapture()
+            await screenCaptureService.stopCapture()
+            do {
+                try await screenCaptureService.startCapture(
+                    enableSystemAudio: true,
+                    audioSampleHandler: makeSystemAudioHandler(for: engineForSystemAudio)
+                )
+            } catch {
+                print("⚠️ System audio capture unavailable after restart; continuing with microphone-only transcription: \(error)")
+            }
+            try await startSpeechCapture(using: engineForSystemAudio)
         } catch {
             print("Failed to restart speech capture: \(error)")
         }
@@ -214,34 +226,35 @@ class AppCoordinator: ObservableObject {
     }
     
     private func setupSubscriptions() {
-        let transcriptPublisher = currentTranscriptPublisher()
+        let sourcePublishers = currentSourcePublishers()
+        let mergedPublisher = Publishers.MergeMany(sourcePublishers.map { $0.publisher })
             .receive(on: RunLoop.main)
             .share()
-        let deltaProcessor = (selectedSpeechEngine == .apple) ? appleDeltaProcessor : whisperDeltaProcessor
-        
-        // Append transcript deltas (kept in-memory for tail + persisted to disk)
-        transcriptPublisher
-            .sink { [weak self] text in
-                guard let self = self else { return }
-                let delta = deltaProcessor.consume(text)
-                self.transcriptBuffer.append(deltaText: delta)
-            }
-            .store(in: &cancellables)
-        
-        // Refresh display at a lower frequency to avoid UI churn
-        transcriptPublisher
+
+        sourcePublishers.forEach { source in
+            source.publisher
+                .receive(on: RunLoop.main)
+                .sink { [weak self] text in
+                    guard let self = self else { return }
+                    let delta = self.deltaProcessor(for: source.speaker).consume(text)
+                    guard !delta.isEmpty else { return }
+                    self.transcriptBuffer.append(deltaText: delta, speaker: source.speaker)
+                }
+                .store(in: &cancellables)
+        }
+
+        mergedPublisher
             .throttle(for: .milliseconds(250), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] _ in
                 self?.transcriptBuffer.refreshDisplay()
             }
             .store(in: &cancellables)
-        
-        // Continuous audio question detection + auto processing
-        transcriptPublisher
+
+        mergedPublisher
             .debounce(for: .seconds(1), scheduler: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self = self else { return }
-                let recentText = self.transcriptBuffer.recentTextForDetection()
+                let recentText = self.stripSpeakerLabels(from: self.transcriptBuffer.recentTextForDetection())
                 guard !recentText.isEmpty else { return }
                 
                 let result = self.audioQuestionPipeline.process(recentText: recentText)
@@ -260,6 +273,49 @@ class AppCoordinator: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+    }
+
+    private func deltaProcessor(for speaker: TranscriptSpeaker) -> TranscriptionDeltaProcessor {
+        switch (selectedSpeechEngine, speaker) {
+        case (.apple, .you):
+            return appleMicDeltaProcessor
+        case (.apple, .others):
+            return appleSystemDeltaProcessor
+        case (.whisper, .you):
+            return whisperMicDeltaProcessor
+        case (.whisper, .others):
+            return whisperSystemDeltaProcessor
+        }
+    }
+
+    private func resetDeltaProcessors() {
+        appleMicDeltaProcessor.reset()
+        appleSystemDeltaProcessor.reset()
+        whisperMicDeltaProcessor.reset()
+        whisperSystemDeltaProcessor.reset()
+    }
+
+    private func stripSpeakerLabels(from text: String) -> String {
+        text.replacingOccurrences(
+            of: #"\[(You|Others)\]\s*"#,
+            with: "",
+            options: .regularExpression
+        )
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func makeSystemAudioHandler(for engine: SpeechEngine) -> (CMSampleBuffer) -> Void {
+        { [weak self] sampleBuffer in
+            guard let self = self else { return }
+            Task { @MainActor in
+                switch engine {
+                case .apple:
+                    self.audioCaptureService.appendSystemAudioSampleBuffer(sampleBuffer)
+                case .whisper:
+                    self.localWhisperService.appendSystemAudioSampleBuffer(sampleBuffer)
+                }
+            }
+        }
     }
     
     private func setupScreenCaptureSubscription() {
@@ -291,8 +347,8 @@ class AppCoordinator: ObservableObject {
         }
         
         transcriptBuffer.clear()
-        appleDeltaProcessor.reset()
-        whisperDeltaProcessor.reset()
+        resetDeltaProcessors()
+        audioCaptureService.reset()
         localWhisperService.reset()
         let saveURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents")
@@ -303,15 +359,20 @@ class AppCoordinator: ObservableObject {
         await requestPermissions()
         
         do {
-            // Always start screen capture (needed for manual trigger)
-            try await screenCaptureService.startCapture()
-            
-            // Only setup auto-processing subscription if automaticMode is enabled
+            do {
+                try await screenCaptureService.startCapture(
+                    enableSystemAudio: true,
+                    audioSampleHandler: makeSystemAudioHandler(for: selectedSpeechEngine)
+                )
+            } catch {
+                print("⚠️ Screen/system audio capture unavailable; continuing with microphone-only transcription: \(error)")
+            }
+
             if automaticMode {
                 setupScreenCaptureSubscription()
             }
 
-            try await startSpeechCapture()
+            try await startSpeechCapture(using: selectedSpeechEngine)
             createQAOverlayWindow()
             createTranscriptOverlayWindow()
             setupKeyboardShortcuts()
@@ -337,9 +398,12 @@ class AppCoordinator: ObservableObject {
         // Clean up hotkeys
         hotKeys.removeAll()
         
-        qaOverlayWindow?.close()
+        for window in [qaOverlayWindow, transcriptOverlayWindow] {
+            window?.ignoresMouseEvents = true
+            window?.contentView = nil
+            window?.orderOut(nil)
+        }
         qaOverlayWindow = nil
-        transcriptOverlayWindow?.close()
         transcriptOverlayWindow = nil
         
         isRunning = false
@@ -436,18 +500,31 @@ class AppCoordinator: ObservableObject {
             self.qaManager.goToLast()
         }
         hotKeys.append(optionDownKey)
+
+        // Cmd+Shift+R: Quits the app
+        let quitHotKey = HotKey(key: .r, modifiers: [.command, .shift])
+        quitHotKey.keyDownHandler = { [weak self] in
+            guard let self = self else { return }
+            Task {
+                await self.stop()
+                await MainActor.run {
+                    NSApplication.shared.terminate(nil)
+                }
+            }
+        }
+        hotKeys.append(quitHotKey)
     }
     
     func triggerScreenQuestion() {
         print("🖥️ Screen question triggered")
-        
-        guard let imageData = screenCaptureService.capturedImageData else {
-            print("⚠️ No screenshot available")
-            return
+        Task {
+            guard let imageData = await screenCaptureService.captureCurrentFrame() else {
+                print("⚠️ No screenshot available")
+                return
+            }
+            print("   Screenshot available: \(imageData.count) bytes")
+            processScreenImage(imageData)
         }
-        
-        print("   Screenshot available: \(imageData.count) bytes")
-        processScreenImage(imageData)
     }
     
     func triggerAudioQuestion() {
@@ -492,7 +569,7 @@ class AppCoordinator: ObservableObject {
     }
     
     private func processScreenImage(_ imageData: Data) {
-        let prompt = "Solve the problem or answer the question shown in this image. Be concise and accurate."
+        let prompt = "Solve the problem or answer the question shown in this image."
         print("📺 Processing screen image with prompt")
         let item = qaManager.addQuestion(prompt, source: .screen, screenContext: nil)
         Task { await getAnswer(for: item, imageData: imageData) }
@@ -536,7 +613,10 @@ class AppCoordinator: ObservableObject {
 
             print("✅ Answer received: \(answer.prefix(100))...")
             guard isRunning else { return }
-            qaManager.updateAnswer(for: item.id, answer: answer)
+            let itemId = item.id
+            Task { @MainActor in
+                self.qaManager.updateAnswer(for: itemId, answer: answer)
+            }
         } catch {
             print("❌ Failed to get answer: \(error)")
             if let llmError = error as? LLMError {
