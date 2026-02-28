@@ -24,7 +24,6 @@ class OverlayWindow: NSWindow {
         titlebarAppearsTransparent = true
         styleMask.insert(.resizable)
         
-        // Receive mouse events so overlay content (buttons, text selection, drag, resize) is interactive
         ignoresMouseEvents = false
         
         setFrame(frame, display: true)

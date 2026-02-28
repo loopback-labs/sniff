@@ -127,7 +127,6 @@ class ScreenCaptureService: NSObject, ObservableObject {
         }
     }
 
-    /// Captures the current screen as JPEG data using SCScreenshotManager (on-demand, no stream throttle).
     func captureCurrentFrame() async -> Data? {
         guard isCapturing, let contentFilter = contentFilter else { return nil }
 
@@ -177,5 +176,4 @@ extension ScreenCaptureService: SCStreamOutput {
 
 enum ScreenCaptureError: Error {
     case noDisplay
-    case captureFailed
 }
