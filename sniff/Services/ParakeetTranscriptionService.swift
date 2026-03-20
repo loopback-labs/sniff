@@ -72,13 +72,7 @@ final class ParakeetTranscriptionService: ObservableObject {
     }
 
     func configure(modelChoice: ParakeetModelChoice) {
-        let newVersion: AsrModelVersion
-        switch modelChoice {
-        case .v2English:
-            newVersion = .v2
-        case .v3Multilingual:
-            newVersion = .v3
-        }
+        let newVersion = modelChoice.asrModelVersion
 
         guard self.asrModelVersion != newVersion else { return }
         self.asrModelVersion = newVersion
@@ -293,30 +287,10 @@ final class ParakeetTranscriptionService: ObservableObject {
         let segmentText = asrResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !segmentText.isEmpty else { return }
 
-        accumulatedMicText = appendWithBoundarySmoothing(accumulatedMicText, segmentText)
+        accumulatedMicText = TranscriptionTextUtils.appendWithBoundarySmoothing(accumulatedMicText, segmentText)
 
         await MainActor.run {
             micTranscribedText = accumulatedMicText
-        }
-    }
-
-    private func appendWithBoundarySmoothing(_ existing: String, _ addition: String) -> String {
-        guard !existing.isEmpty else { return addition }
-
-        // If the new text starts with something that appears at the end of the existing text,
-        // trim the duplicated prefix to reduce obvious boundary repetition.
-        let maxSuffixChars = 48
-        let suffix = String(existing.suffix(maxSuffixChars))
-        if addition.hasPrefix(suffix) {
-            let trimmed = String(addition.dropFirst(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty { return existing }
-            return existing + " " + trimmed
-        }
-
-        if existing.last?.isWhitespace == true {
-            return existing + addition
-        } else {
-            return existing + " " + addition
         }
     }
 
@@ -395,7 +369,7 @@ final class ParakeetTranscriptionService: ObservableObject {
                 // speech and Parakeet would keep returning the same lines during a pause.
                 let recentCount = min(systemRealtimeRecentActivitySamples, tail.count)
                 let recentTail = Array(tail.suffix(recentCount))
-                let recentRMS = Self.rootMeanSquare(of: recentTail)
+                let recentRMS = TranscriptionTextUtils.rootMeanSquare(of: recentTail)
                 if recentRMS < systemRealtimeSilenceRMSThreshold {
                     systemRealtimeLastSampleCount = snapshotCount
                     continue
@@ -406,7 +380,7 @@ final class ParakeetTranscriptionService: ObservableObject {
                 let asrResult = try await asrManager.transcribe(tail, source: .microphone)
                 let raw = asrResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if raw.isEmpty { continue }
-                let text = normalizeSystemText(asrResult.text)
+                let text = TranscriptionTextUtils.normalizeSystemText(asrResult.text)
                 guard !text.isEmpty, !Task.isCancelled else { continue }
                 await MainActor.run {
                     // Avoid updating while capture is stopping/restarting.
@@ -423,30 +397,10 @@ final class ParakeetTranscriptionService: ObservableObject {
         }
     }
 
-    private static func rootMeanSquare(of samples: [Float]) -> Float {
-        guard !samples.isEmpty else { return 0 }
-        var sum: Float = 0
-        for x in samples {
-            sum += x * x
-        }
-        return sqrt(sum / Float(samples.count))
-    }
-
-    private func normalizeSystemText(_ rawText: String) -> String {
-        var text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        // `TranscriptBuffer` only displays sentence-complete chunks (matches `[.!?]+`).
-        // FluidAudio can return text without terminal punctuation for single-shot transcriptions,
-        // so force a sentence terminator to make the system transcript visible.
-        if let last = text.last, !".!?".contains(last) {
-            text.append(".")
-        }
-        return text
-    }
-
     private func transcribeSystemSamplesAndSetText(_ samples: [Float], asrManager: AsrManager) async throws {
         // Raw float buffers from ScreenCaptureKit match FluidAudio's default `[Float]` path (`.microphone`).
         let asrResult = try await asrManager.transcribe(samples, source: .microphone)
-        let text = normalizeSystemText(asrResult.text)
+        let text = TranscriptionTextUtils.normalizeSystemText(asrResult.text)
         guard !text.isEmpty else { return }
         await MainActor.run {
             systemTranscribedText = text

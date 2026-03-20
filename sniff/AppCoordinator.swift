@@ -54,7 +54,7 @@ class AppCoordinator: ObservableObject {
     }
     @Published var selectedProvider: LLMProvider {
         didSet {
-            UserDefaults.standard.set(selectedProvider.rawValue, forKey: "selectedLLMProvider")
+            UserDefaults.standard.set(selectedProvider.rawValue, forKey: UserDefaultsKeys.selectedLLMProvider)
             let next = LLMModelCatalog.loadOrDefaultModelId(for: selectedProvider)
             if next != selectedModelId {
                 selectedModelId = next
@@ -73,7 +73,7 @@ class AppCoordinator: ObservableObject {
     }
     @Published var selectedSpeechEngine: SpeechEngine {
         didSet {
-            UserDefaults.standard.set(selectedSpeechEngine.rawValue, forKey: "selectedSpeechEngine")
+            UserDefaults.standard.set(selectedSpeechEngine.rawValue, forKey: UserDefaultsKeys.selectedSpeechEngine)
             if isRunning {
                 Task { await restartSpeechCapture() }
             }
@@ -82,7 +82,7 @@ class AppCoordinator: ObservableObject {
 
     @Published var selectedParakeetModelChoice: ParakeetModelChoice {
         didSet {
-            UserDefaults.standard.set(selectedParakeetModelChoice.rawValue, forKey: "selectedParakeetModelChoice")
+            UserDefaults.standard.set(selectedParakeetModelChoice.rawValue, forKey: UserDefaultsKeys.selectedParakeetModelChoice)
             if isRunning && selectedSpeechEngine == .parakeet {
                 Task { await restartSpeechCapture() }
             }
@@ -90,19 +90,19 @@ class AppCoordinator: ObservableObject {
     }
     @Published var showOverlay: Bool {
         didSet {
-            UserDefaults.standard.set(showOverlay, forKey: "showOverlay")
+            UserDefaults.standard.set(showOverlay, forKey: UserDefaultsKeys.showOverlay)
             updateOverlayVisibility()
         }
     }
     
     init() {
-        let savedProvider = UserDefaults.standard.string(forKey: "selectedLLMProvider") ?? LLMProvider.openai.rawValue
+        let savedProvider = UserDefaults.standard.string(forKey: UserDefaultsKeys.selectedLLMProvider) ?? LLMProvider.openai.rawValue
         let initialLLMProvider = LLMProvider(rawValue: savedProvider) ?? .openai
         selectedProvider = initialLLMProvider
-        showOverlay = UserDefaults.standard.object(forKey: "showOverlay") as? Bool ?? true
-        let savedSpeechEngine = UserDefaults.standard.string(forKey: "selectedSpeechEngine") ?? SpeechEngine.whisper.rawValue
+        showOverlay = UserDefaults.standard.object(forKey: UserDefaultsKeys.showOverlay) as? Bool ?? true
+        let savedSpeechEngine = UserDefaults.standard.string(forKey: UserDefaultsKeys.selectedSpeechEngine) ?? SpeechEngine.whisper.rawValue
         selectedSpeechEngine = SpeechEngine(rawValue: savedSpeechEngine) ?? .whisper
-        let savedParakeetModel = UserDefaults.standard.string(forKey: "selectedParakeetModelChoice") ?? ParakeetModelChoice.v3Multilingual.rawValue
+        let savedParakeetModel = UserDefaults.standard.string(forKey: UserDefaultsKeys.selectedParakeetModelChoice) ?? ParakeetModelChoice.v3Multilingual.rawValue
         selectedParakeetModelChoice = ParakeetModelChoice(rawValue: savedParakeetModel) ?? .v3Multilingual
         
         audioQuestionPipeline = AudioQuestionPipeline(questionDetectionService: questionDetectionService)
@@ -119,7 +119,7 @@ class AppCoordinator: ObservableObject {
     }
     
     private func applySavedAudioInputDevice() {
-        guard let savedUID = UserDefaults.standard.string(forKey: "selectedAudioInputDeviceUID") else { return }
+        guard let savedUID = UserDefaults.standard.string(forKey: UserDefaultsKeys.selectedAudioInputDeviceUID) else { return }
         do {
             try audioDeviceService.setDefaultInputDevice(byUID: savedUID)
         } catch {
@@ -132,46 +132,65 @@ class AppCoordinator: ObservableObject {
             ? LLMModelCatalog.loadOrDefaultModelId(for: selectedProvider)
             : selectedModelId
 
-        switch selectedProvider {
-        case .chatgpt:
-            guard chatGPTAuthManager.isSignedIn else {
-                llmService = nil
-                return
-            }
-            llmService = ChatGPTService(model: modelId, authManager: chatGPTAuthManager)
-        case .openai:
-            guard let apiKey = keychainService.getAPIKey(for: .openai), !apiKey.isEmpty else {
-                llmService = nil
-                return
-            }
-            llmService = OpenAIService(apiKey: apiKey, model: modelId)
-        case .claude:
-            guard let apiKey = keychainService.getAPIKey(for: .claude), !apiKey.isEmpty else {
-                llmService = nil
-                return
-            }
-            llmService = ClaudeService(apiKey: apiKey, model: modelId)
-        case .gemini:
-            guard let apiKey = keychainService.getAPIKey(for: .gemini), !apiKey.isEmpty else {
-                llmService = nil
-                return
-            }
-            llmService = GeminiService(apiKey: apiKey, model: modelId)
-        }
+        llmService = LLMServiceFactory.makeService(
+            provider: selectedProvider,
+            modelId: modelId,
+            keychain: keychainService,
+            chatGPTAuth: chatGPTAuthManager
+        )
     }
 
-    private func currentSourcePublishers() -> [(speaker: TranscriptSpeaker, publisher: AnyPublisher<String, Never>)] {
-        switch selectedSpeechEngine {
+    private struct SpeechEngineRouting {
+        let sourcePublishers: [(speaker: TranscriptSpeaker, publisher: AnyPublisher<String, Never>)]
+        let startCapture: () async throws -> Void
+        let routeSystemAudio: (CMSampleBuffer) -> Void
+        let deltaProcessor: (TranscriptSpeaker) -> TranscriptionDeltaProcessor
+    }
+
+    private func speechRouting(for engine: SpeechEngine) -> SpeechEngineRouting {
+        switch engine {
         case .whisper:
-            return [
-                (.you, localWhisperService.$micTranscribedText.eraseToAnyPublisher()),
-                (.others, localWhisperService.$systemTranscribedText.eraseToAnyPublisher())
-            ]
+            return SpeechEngineRouting(
+                sourcePublishers: [
+                    (.you, localWhisperService.$micTranscribedText.eraseToAnyPublisher()),
+                    (.others, localWhisperService.$systemTranscribedText.eraseToAnyPublisher())
+                ],
+                startCapture: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    self.configureWhisperService()
+                    try await self.localWhisperService.startCapture()
+                },
+                routeSystemAudio: { [weak self] buffer in
+                    self?.localWhisperService.appendSystemAudioSampleBuffer(buffer)
+                },
+                deltaProcessor: { speaker in
+                    switch speaker {
+                    case .you: return self.whisperMicDeltaProcessor
+                    case .others: return self.whisperSystemDeltaProcessor
+                    }
+                }
+            )
         case .parakeet:
-            return [
-                (.you, parakeetService.$micTranscribedText.eraseToAnyPublisher()),
-                (.others, parakeetService.$systemTranscribedText.eraseToAnyPublisher())
-            ]
+            return SpeechEngineRouting(
+                sourcePublishers: [
+                    (.you, parakeetService.$micTranscribedText.eraseToAnyPublisher()),
+                    (.others, parakeetService.$systemTranscribedText.eraseToAnyPublisher())
+                ],
+                startCapture: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    self.configureParakeetService()
+                    try await self.parakeetService.startCapture()
+                },
+                routeSystemAudio: { [weak self] buffer in
+                    self?.parakeetService.appendSystemAudioSampleBuffer(buffer)
+                },
+                deltaProcessor: { speaker in
+                    switch speaker {
+                    case .you: return self.parakeetMicDeltaProcessor
+                    case .others: return self.parakeetSystemDeltaProcessor
+                    }
+                }
+            )
         }
     }
 
@@ -181,14 +200,7 @@ class AppCoordinator: ObservableObject {
     }
 
     private func startSpeechCapture(using engine: SpeechEngine) async throws {
-        switch engine {
-        case .whisper:
-            configureWhisperService()
-            try await localWhisperService.startCapture()
-        case .parakeet:
-            configureParakeetService()
-            try await parakeetService.startCapture()
-        }
+        try await speechRouting(for: engine).startCapture()
     }
 
     private func stopSpeechCapture(finalizeSystem: Bool) async {
@@ -223,7 +235,7 @@ class AppCoordinator: ObservableObject {
     }
 
     private func configureWhisperService() {
-        let storedModelID = UserDefaults.standard.string(forKey: LocalWhisperService.modelSelectionKey) ?? ""
+        let storedModelID = UserDefaults.standard.string(forKey: UserDefaultsKeys.whisperModelId) ?? ""
         let modelID = storedModelID.isEmpty
             ? LocalWhisperService.defaultModelID()
             : LocalWhisperService.normalizedModelID(from: storedModelID)
@@ -257,7 +269,7 @@ class AppCoordinator: ObservableObject {
     }
     
     private func setupSubscriptions() {
-        let sourcePublishers = currentSourcePublishers()
+        let sourcePublishers = speechRouting(for: selectedSpeechEngine).sourcePublishers
         let mergedPublisher = Publishers.MergeMany(sourcePublishers.map { $0.publisher })
             .receive(on: RunLoop.main)
             .share()
@@ -307,16 +319,7 @@ class AppCoordinator: ObservableObject {
     }
 
     private func deltaProcessor(for speaker: TranscriptSpeaker) -> TranscriptionDeltaProcessor {
-        switch (selectedSpeechEngine, speaker) {
-        case (.whisper, .you):
-            return whisperMicDeltaProcessor
-        case (.whisper, .others):
-            return whisperSystemDeltaProcessor
-        case (.parakeet, .you):
-            return parakeetMicDeltaProcessor
-        case (.parakeet, .others):
-            return parakeetSystemDeltaProcessor
-        }
+        speechRouting(for: selectedSpeechEngine).deltaProcessor(speaker)
     }
 
     private func resetDeltaProcessors() {
@@ -336,15 +339,10 @@ class AppCoordinator: ObservableObject {
     }
 
     private func makeSystemAudioHandler(for engine: SpeechEngine) -> (CMSampleBuffer) -> Void {
-        { [weak self] sampleBuffer in
-            guard let self = self else { return }
+        let route = speechRouting(for: engine).routeSystemAudio
+        return { sampleBuffer in
             Task { @MainActor in
-                switch engine {
-                case .whisper:
-                    self.localWhisperService.appendSystemAudioSampleBuffer(sampleBuffer)
-                case .parakeet:
-                    self.parakeetService.appendSystemAudioSampleBuffer(sampleBuffer)
-                }
+                route(sampleBuffer)
             }
         }
     }

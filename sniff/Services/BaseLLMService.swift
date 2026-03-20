@@ -90,15 +90,7 @@ class BaseLLMService: LLMService {
             throw LLMError.invalidResponse
         }
         guard (200...299).contains(httpResponse.statusCode) else {
-            var errorBody = ""
-            for try await line in bytes.lines { errorBody += line }
-            if let data = errorBody.data(using: .utf8),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let err = json["error"] as? [String: Any],
-               let message = err["message"] as? String {
-                throw LLMError.apiError(message)
-            }
-            throw LLMError.httpError(httpResponse.statusCode)
+            try await LLMStreamHelpers.throwForFailedHTTPResponse(bytes: bytes, statusCode: httpResponse.statusCode)
         }
 
         var collected = ""
@@ -116,9 +108,7 @@ class BaseLLMService: LLMService {
     // MARK: - Shared parsing helpers
     
     static func parseOpenAIFormat(_ line: String) -> String? {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("data:") else { return nil }
-        let payload = trimmed.replacingOccurrences(of: "data:", with: "").trimmingCharacters(in: .whitespaces)
+        guard let payload = LLMStreamHelpers.sseDataPayload(from: line) else { return nil }
         if payload == "[DONE]" { return "[DONE]" }
 
         guard let data = payload.data(using: .utf8),

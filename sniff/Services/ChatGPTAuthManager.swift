@@ -10,7 +10,6 @@ import Foundation
 import Network
 import Security
 
-/// OAuth 2.0 + PKCE for "Sign in with ChatGPT" (OpenAI auth server).
 @MainActor
 final class ChatGPTAuthManager: ObservableObject {
   @Published private(set) var isSignedIn: Bool = false
@@ -21,7 +20,7 @@ final class ChatGPTAuthManager: ObservableObject {
   private static let callbackPath = "/auth/callback"
   private static let defaultPort: UInt16 = 1455
 
-  private static let trackADefaultCodexClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
+  private static let clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
   private let tokenFileURL: URL
 
@@ -40,16 +39,6 @@ final class ChatGPTAuthManager: ObservableObject {
     tokenFileURL = dir.appendingPathComponent("chatgpt-auth.json")
     loadFromDisk()
   }
-
-  /// Uses `OpenAIOAuthClientID` from Info.plist when set; otherwise a bundled default client id.
-  static func resolvedClientID() -> String {
-    let fromPlist = Bundle.main.object(forInfoDictionaryKey: "OpenAIOAuthClientID") as? String ?? ""
-    let trimmed = fromPlist.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !trimmed.isEmpty { return trimmed }
-    return trackADefaultCodexClientID
-  }
-
-  static var clientID: String { resolvedClientID() }
 
   func signOut() {
     try? FileManager.default.removeItem(at: tokenFileURL)
@@ -75,7 +64,7 @@ final class ChatGPTAuthManager: ObservableObject {
   }
 
   func signInWithBrowser() async throws {
-    let clientId = Self.resolvedClientID()
+    let clientId = Self.clientID
 
     let verifier = Self.makeCodeVerifier()
     let challenge = Self.codeChallengeS256(verifier: verifier)
@@ -192,7 +181,7 @@ final class ChatGPTAuthManager: ObservableObject {
   }
 
   private func refreshTokens(refreshToken: String) async throws -> StoredSession {
-    let clientId = Self.resolvedClientID()
+    let clientId = Self.clientID
     var request = URLRequest(url: URL(string: Self.tokenURL)!)
     request.httpMethod = "POST"
     request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -230,7 +219,6 @@ final class ChatGPTAuthManager: ObservableObject {
     return StoredSession(accessToken: access, refreshToken: refresh, expiresAt: expiresAt, accountId: accountId)
   }
 
-  /// Parses JWT payload only (no signature verification) for a local account hint after token exchange.
   private static func chatgptAccountIdFromAccessTokenJWT(_ accessToken: String) -> String? {
     let parts = accessToken.split(separator: ".")
     guard parts.count >= 2 else { return nil }
@@ -447,7 +435,7 @@ enum ChatGPTAuthError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .missingClientID:
-      return "OAuth client ID could not be resolved (internal error)."
+      return "ChatGPT client ID is missing from configuration."
     case .invalidAuthURL:
       return "Could not build authorization URL."
     case .notSignedIn:

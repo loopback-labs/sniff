@@ -11,7 +11,7 @@ final class LocalWhisperService: ObservableObject {
     @Published var systemTranscribedText: String = ""
     @Published var isCapturing: Bool = false
 
-    static let modelSelectionKey = "whisperModelId"
+    static let modelSelectionKey = UserDefaultsKeys.whisperModelId
 
     static let availableModelNames: [String] = [
         "tiny", "small", "medium", "large-v3"
@@ -215,7 +215,7 @@ final class LocalWhisperService: ObservableObject {
 
             let recentCount = min(realtimeRecentActivitySamples, tail.count)
             let recentTail = Array(tail.suffix(recentCount))
-            guard Self.rootMeanSquare(of: recentTail) >= realtimeSilenceRMSThreshold else {
+            guard TranscriptionTextUtils.rootMeanSquare(of: recentTail) >= realtimeSilenceRMSThreshold else {
                 micRealtimeLastSampleCount = snapshotCount
                 continue
             }
@@ -227,7 +227,7 @@ final class LocalWhisperService: ObservableObject {
                 let normalized = Self.normalize(text)
                 guard normalized != lastMicPublishedNormalized else { continue }
                 lastMicPublishedNormalized = normalized
-                accumulatedMicText = appendWithBoundarySmoothing(accumulatedMicText, text)
+                accumulatedMicText = TranscriptionTextUtils.appendWithBoundarySmoothing(accumulatedMicText, text)
                 micTranscribedText = accumulatedMicText
             } catch {
                 if !Task.isCancelled {
@@ -259,7 +259,7 @@ final class LocalWhisperService: ObservableObject {
 
             let recentCount = min(realtimeRecentActivitySamples, tail.count)
             let recentTail = Array(tail.suffix(recentCount))
-            guard Self.rootMeanSquare(of: recentTail) >= realtimeSilenceRMSThreshold else {
+            guard TranscriptionTextUtils.rootMeanSquare(of: recentTail) >= realtimeSilenceRMSThreshold else {
                 systemRealtimeLastSampleCount = snapshotCount
                 continue
             }
@@ -268,7 +268,7 @@ final class LocalWhisperService: ObservableObject {
             do {
                 let raw = try await transcribe(samples: tail)
                 guard !raw.isEmpty else { continue }
-                let text = normalizeSystemText(raw)
+                let text = TranscriptionTextUtils.normalizeSystemText(raw)
                 guard !text.isEmpty, text != lastSystemPublishedNormalized else { continue }
                 lastSystemPublishedNormalized = text
                 systemTranscribedText = text
@@ -287,7 +287,7 @@ final class LocalWhisperService: ObservableObject {
             guard !text.isEmpty else { return }
             let normalized = Self.normalize(text)
             guard normalized != lastMicPublishedNormalized else { return }
-            accumulatedMicText = appendWithBoundarySmoothing(accumulatedMicText, text)
+            accumulatedMicText = TranscriptionTextUtils.appendWithBoundarySmoothing(accumulatedMicText, text)
             lastMicPublishedNormalized = normalized
             micTranscribedText = accumulatedMicText
         } catch {
@@ -299,7 +299,7 @@ final class LocalWhisperService: ObservableObject {
         guard !systemSamples.isEmpty else { return }
         do {
             let raw = try await transcribe(samples: systemSamples)
-            let text = normalizeSystemText(raw)
+            let text = TranscriptionTextUtils.normalizeSystemText(raw)
             guard !text.isEmpty else { return }
             systemTranscribedText = text
         } catch {
@@ -328,41 +328,6 @@ final class LocalWhisperService: ObservableObject {
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return text
-    }
-
-    private func normalizeSystemText(_ rawText: String) -> String {
-        var text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let last = text.last, !".!?".contains(last) {
-            text.append(".")
-        }
-        return text
-    }
-
-    private func appendWithBoundarySmoothing(_ existing: String, _ addition: String) -> String {
-        guard !addition.isEmpty else { return existing }
-        guard !existing.isEmpty else { return addition }
-
-        let maxSuffixChars = 48
-        let suffix = String(existing.suffix(maxSuffixChars))
-        if addition.hasPrefix(suffix) {
-            let trimmed = String(addition.dropFirst(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty { return existing }
-            return existing + " " + trimmed
-        }
-
-        if existing.last?.isWhitespace == true {
-            return existing + addition
-        }
-        return existing + " " + addition
-    }
-
-    private static func rootMeanSquare(of samples: [Float]) -> Float {
-        guard !samples.isEmpty else { return 0 }
-        var sum: Float = 0
-        for x in samples {
-            sum += x * x
-        }
-        return sqrt(sum / Float(samples.count))
     }
 
     private static func normalize(_ text: String) -> String {

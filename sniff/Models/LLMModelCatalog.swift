@@ -5,7 +5,6 @@
 
 import Foundation
 
-/// Curated model options per provider. `supportsVision` controls screen-question (image) flows.
 struct LLMModelOption: Identifiable, Hashable {
   let id: String
   let displayName: String
@@ -19,47 +18,46 @@ struct LLMModelOption: Identifiable, Hashable {
 }
 
 enum LLMModelCatalog {
-  private static let storagePrefix = "llmModelId_"
+  private static let openAIModelOptions: [LLMModelOption] = [
+    LLMModelOption(id: "gpt-4o", supportsVision: true),
+    LLMModelOption(id: "gpt-4o-mini", supportsVision: true),
+    LLMModelOption(id: "gpt-4.1", supportsVision: true),
+    LLMModelOption(id: "gpt-4.1-mini", supportsVision: true),
+  ]
+
+  private static let chatgptModelIds: Set<String> = [
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+  ]
 
   static func models(for provider: LLMProvider) -> [LLMModelOption] {
     switch provider {
     case .openai:
-      return [
-        LLMModelOption(id: "gpt-4o", supportsVision: true),
-        LLMModelOption(id: "gpt-4o-mini", supportsVision: true),
-        LLMModelOption(id: "gpt-4.1", supportsVision: true),
-        LLMModelOption(id: "gpt-4.1-mini", supportsVision: true),
-        LLMModelOption(id: "o4-mini", supportsVision: false),
-        LLMModelOption(id: "o3-mini", supportsVision: false),
-        LLMModelOption(id: "gpt-4-turbo", supportsVision: true)
-      ]
+      return openAIModelOptions
+    case .chatgpt:
+      return openAIModelOptions.filter { chatgptModelIds.contains($0.id) }
     case .claude:
       return [
-        LLMModelOption(id: "claude-sonnet-4-20250514", supportsVision: true),
-        LLMModelOption(id: "claude-3-5-sonnet-20241022", supportsVision: true),
-        LLMModelOption(id: "claude-3-5-haiku-20241022", supportsVision: true),
-        LLMModelOption(id: "claude-3-opus-20240229", supportsVision: true)
+        // source: https://platform.claude.com/docs/en/about-claude/models/overview
+        LLMModelOption(id: "claude-sonnet-4-6", displayName: "Sonnet 4.6", supportsVision: true),
+        LLMModelOption(id: "claude-opus-4-6", displayName: "Opus 4.6", supportsVision: true),
+        LLMModelOption(id: "claude-haiku-4-5-20251001", displayName: "Haiku 4.5", supportsVision: true),
       ]
     case .gemini:
       return [
-        LLMModelOption(id: "gemini-3-flash-preview", supportsVision: true),
-        LLMModelOption(id: "gemini-2.5-flash", supportsVision: true),
-        LLMModelOption(id: "gemini-2.5-pro", supportsVision: true),
-        LLMModelOption(id: "gemini-2.0-flash", supportsVision: true)
-      ]
-    case .chatgpt:
-      return [
-        LLMModelOption(id: "gpt-4o", supportsVision: true),
-        LLMModelOption(id: "gpt-4.1", supportsVision: true),
-        LLMModelOption(id: "gpt-4.1-mini", supportsVision: true),
-        LLMModelOption(id: "o4-mini", supportsVision: false),
-        LLMModelOption(id: "o3-mini", supportsVision: false)
+        // Source: https://ai.google.dev/gemini-api/docs/pricing
+        LLMModelOption(id: "gemini-3-flash-preview", displayName: "Gemini 3 Flash Preview", supportsVision: true),
+        LLMModelOption(id: "gemini-2.5-flash", displayName: "Gemini 2.5 Flash", supportsVision: true),
+        LLMModelOption(id: "gemini-3.1-flash-lite-preview", displayName: "Gemini 3.1 Flash-Lite Preview", supportsVision: true),
+        LLMModelOption(id: "gemini-3.1-pro-preview", displayName: "Gemini 3.1 Pro Preview", supportsVision: true),
       ]
     }
   }
 
   static func defaultModelId(for provider: LLMProvider) -> String {
-    models(for: provider).first?.id ?? "gpt-4o"
+    models(for: provider).first?.id ?? openAIModelOptions.first?.id ?? "gpt-4.1-mini"
   }
 
   static func supportsVision(provider: LLMProvider, modelId: String) -> Bool {
@@ -71,11 +69,11 @@ enum LLMModelCatalog {
   }
 
   static func storageKey(for provider: LLMProvider) -> String {
-    "\(storagePrefix)\(provider.rawValue)"
+    UserDefaultsKeys.llmModelId(for: provider)
   }
 
   static func savedModelId(for provider: LLMProvider) -> String? {
-    UserDefaults.standard.string(forKey: storageKey(for: provider))
+    UserDefaults.standard.string(forKey: UserDefaultsKeys.llmModelId(for: provider))
   }
 
   static func loadOrDefaultModelId(for provider: LLMProvider) -> String {
@@ -86,6 +84,6 @@ enum LLMModelCatalog {
   }
 
   static func saveModelId(_ modelId: String, for provider: LLMProvider) {
-    UserDefaults.standard.set(modelId, forKey: storageKey(for: provider))
+    UserDefaults.standard.set(modelId, forKey: UserDefaultsKeys.llmModelId(for: provider))
   }
 }
