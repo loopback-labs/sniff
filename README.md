@@ -9,7 +9,7 @@ user-facing name: **SystemUISyncAgent** in Activity Monitor / Login Items
 ## Features
 
 - **Automatic Question Detection**: Detects questions from live audio
-- **Multiple LLM Providers**: Supports OpenAI, Claude (Anthropic), Gemini (Google), and Perplexity
+- **Multiple LLM Providers**: Supports OpenAI, Claude (Anthropic), and Gemini (Google)
 - **Real-time Dual-Source Transcription**: Live transcript from microphone + system audio with speaker labels (`[You]` / `[Others]`)
 - **Screen Question Capture**: Sends a screenshot to the selected provider for visual Q&A
 - **Overlay Windows**: Draggable, resizable, click-through overlays for Q&A and transcript
@@ -66,7 +66,6 @@ This produces `syncsd.app` (display name: SystemUISyncAgent).
 - **OpenAI**: Requires an OpenAI API key
 - **Claude (Anthropic)**: Requires an Anthropic API key
 - **Gemini (Google)**: Requires a Google AI API key
-- **Perplexity**: Requires a Perplexity API key
 
 ## Usage
 

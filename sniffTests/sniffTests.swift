@@ -418,7 +418,7 @@ struct sniffTests {
     }
     
     @Test func base64DataURLFormatIsCorrect() {
-        // Test OpenAI/Perplexity format
+        // Test OpenAI format
         let testData = "fake jpeg".data(using: .utf8)!
         let base64 = testData.base64EncodedString()
         let dataURL = "data:image/jpeg;base64,\(base64)"
@@ -594,8 +594,12 @@ struct sniffTests {
 
     @Test func llmProviderMetadata() {
         #expect(LLMProvider.openai.displayName == "OpenAI")
+        #expect(LLMProvider.claude.displayName == "Claude")
         #expect(LLMProvider.gemini.displayName == "Gemini")
-        #expect(LLMProvider.perplexity.keychainKey == "perplexity_api_key")
+        #expect(LLMProvider.chatgpt.displayName == "ChatGPT")
+        #expect(LLMProvider.openai.keychainKey == "openai_api_key")
+        #expect(LLMProvider.chatgpt.usesOAuth == true)
+        #expect(LLMProvider.openai.usesOAuth == false)
         #expect(LLMProvider.allCases.count == 4)
     }
 
@@ -611,16 +615,17 @@ struct sniffTests {
     }
 
     @Test func claudeServiceParsesStreamLine() {
-        let service = ClaudeService(apiKey: "test")
+        let service = ClaudeService(apiKey: "test", model: "claude-sonnet-4-20250514")
         let line = "data: {\"delta\":{\"text\":\"Hello\"}}"
         #expect(service.parseStreamLine(line) == "Hello")
         #expect(service.isStreamDone("[DONE]") == false)
     }
 
     @Test func geminiServiceParsesStreamLineAndBuildURL() {
-        let service = GeminiService(apiKey: "abc123")
+        let service = GeminiService(apiKey: "abc123", model: "gemini-2.0-flash")
         let line = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi\"}]}}]}"
         #expect(service.parseStreamLine(line) == "Hi")
         #expect(service.buildURL()?.absoluteString.contains("key=abc123") == true)
+        #expect(service.buildURL()?.absoluteString.contains("gemini-2.0-flash") == true)
     }
 }

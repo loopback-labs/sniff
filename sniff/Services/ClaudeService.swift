@@ -6,7 +6,10 @@
 import Foundation
 
 class ClaudeService: BaseLLMService {
-    init(apiKey: String) {
+    private let model: String
+
+    init(apiKey: String, model: String) {
+        self.model = model
         super.init(apiKey: apiKey, baseURL: "https://api.anthropic.com/v1/messages")
     }
 
@@ -18,7 +21,7 @@ class ClaudeService: BaseLLMService {
 
     override func buildTextRequestBody(question: String, systemPrompt: String) -> [String: Any] {
         [
-            "model": "claude-sonnet-4-20250514",
+            "model": model,
             "max_tokens": 1024,
             "system": systemPrompt,
             "messages": [["role": "user", "content": question]],
@@ -28,7 +31,7 @@ class ClaudeService: BaseLLMService {
 
     override func buildImageRequestBody(prompt: String, imageData: Data) -> [String: Any] {
         [
-            "model": "claude-sonnet-4-20250514",
+            "model": model,
             "max_tokens": 1024,
             "messages": [
                 [

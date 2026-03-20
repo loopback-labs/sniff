@@ -1,14 +1,9 @@
-//
-//  LocalWhisperService.swift
-//  sniff
-//
-//  Created by Piyushh Bhutoria on 04/02/26.
-//
-
 import Foundation
+import AVFoundation
 import Combine
-import Speech
 import CoreMedia
+import FluidAudio
+import WhisperKit
 
 @MainActor
 final class LocalWhisperService: ObservableObject {
@@ -16,353 +11,509 @@ final class LocalWhisperService: ObservableObject {
     @Published var systemTranscribedText: String = ""
     @Published var isCapturing: Bool = false
 
+    static let modelSelectionKey = "whisperModelId"
+
     static let availableModelNames: [String] = [
-        "tiny", "tiny.en", "base", "base.en", "small", "small.en",
-        "medium", "medium.en", "large-v1", "large-v2", "large-v3", "large", "turbo"
+        "tiny", "small", "medium", "large-v3"
     ]
 
     static let estimatedModelSizes: [String: Int64] = [
-        "tiny": 75_000_000, "tiny.en": 75_000_000,
-        "base": 142_000_000, "base.en": 142_000_000,
-        "small": 466_000_000, "small.en": 466_000_000,
-        "medium": 1_500_000_000, "medium.en": 1_500_000_000,
-        "large-v1": 2_900_000_000, "large-v2": 2_900_000_000,
-        "large-v3": 2_900_000_000, "large": 2_900_000_000,
-        "turbo": 1_600_000_000
+        "tiny": 80_000_000,
+        "small": 520_000_000,
+        "medium": 1_700_000_000,
+        "large-v3": 1_000_000_000
     ]
 
-    private var process: Process?
-    private var stdoutPipe: Pipe?
-    private var stderrPipe: Pipe?
-    private var outputBuffer = ""
-    private var lastEmittedLine = ""
-    private static let ansiEscapeRegex: NSRegularExpression = {
-        let pattern = "\u{001B}\\[[0-9;?]*[ -/]*[@-~]"
-        return try! NSRegularExpression(pattern: pattern)
-    }()
-    
-    private var systemRecognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var systemRecognitionTask: SFSpeechRecognitionTask?
-    private let systemSpeechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-    
-    private var binaryPath: String = ""
-    private var modelPath: String = ""
+    private static let downloadedModelPathMapKey = "whisperDownloadedModelPaths"
 
-    // MARK: - Configuration
+    private let audioEngine = AVAudioEngine()
+    private let audioConverter = AudioConverter()
 
-    func configure(binaryPath: String, modelPath: String) {
-        self.binaryPath = binaryPath
-        self.modelPath = modelPath
+    private var configuredModelID: String = LocalWhisperService.defaultModelID()
+    private var loadedModelVariant: String?
+    private var whisperKit: WhisperKit?
+
+    private var capturingInternal = false
+    private var transcriptionInFlight = false
+
+    private var micSamples: [Float] = []
+    private var systemSamples: [Float] = []
+    private var accumulatedMicText = ""
+    private var lastMicPublishedNormalized = ""
+    private var lastSystemPublishedNormalized = ""
+
+    private var micRealtimeTask: Task<Void, Never>?
+    private var systemRealtimeTask: Task<Void, Never>?
+
+    private var micRealtimeLastSampleCount = 0
+    private var systemRealtimeLastSampleCount = 0
+
+    private let realtimeIntervalSeconds: TimeInterval = 1.0
+    private let realtimeMinInitialSamples: Int = 16_000
+    private let realtimeMinNewSamples: Int = 8_000
+    private let realtimeWindowSamples: Int = 240_000
+    private let realtimeRecentActivitySamples: Int = 16_000
+    private let realtimeSilenceRMSThreshold: Float = 0.0025
+
+    func configure(modelID: String) {
+        let normalized = Self.normalizedModelID(from: modelID)
+        configuredModelID = normalized.isEmpty ? Self.defaultModelID() : normalized
+        UserDefaults.standard.set(configuredModelID, forKey: Self.modelSelectionKey)
     }
-
-    // MARK: - Capture Control
 
     func startCapture() async throws {
         guard !isCapturing else { return }
 
-        let resolvedBinaryPath = (binaryPath as NSString).expandingTildeInPath
-        let resolvedModelPath = (modelPath as NSString).expandingTildeInPath
+        try await ensureWhisperKitReady()
 
-        guard FileManager.default.fileExists(atPath: resolvedBinaryPath) else {
-            throw LocalWhisperError.binaryNotFound(resolvedBinaryPath)
-        }
+        capturingInternal = true
+        micSamples.removeAll(keepingCapacity: true)
+        systemSamples.removeAll(keepingCapacity: true)
+        micRealtimeLastSampleCount = 0
+        systemRealtimeLastSampleCount = 0
+        transcriptionInFlight = false
 
-        if !FileManager.default.fileExists(atPath: resolvedModelPath) {
-            try await downloadModel(to: resolvedModelPath)
-        }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: resolvedBinaryPath)
-        process.arguments = ["-m", resolvedModelPath, "-l", "en"]
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            Task { @MainActor [weak self] in
-                self?.consumeOutput(data: data)
-            }
-        }
-
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            _ = handle.availableData
-        }
-
-        process.terminationHandler = { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.isCapturing = false
-            }
-        }
-
-        do {
-            try process.run()
-            self.process = process
-            self.stdoutPipe = stdoutPipe
-            self.stderrPipe = stderrPipe
-            try startSystemAudioRecognition()
-            
-            isCapturing = true
-        } catch {
-            throw LocalWhisperError.launchFailed(error.localizedDescription)
-        }
+        startMicCapture()
+        startRealtimeLoops()
+        isCapturing = true
     }
 
     func stopCapture() {
-        guard isCapturing else { return }
-        
-        stdoutPipe?.fileHandleForReading.readabilityHandler = nil
-        stderrPipe?.fileHandleForReading.readabilityHandler = nil
-        process?.terminate()
-        process = nil
-        stdoutPipe = nil
-        stderrPipe = nil
-        
-        stopSystemAudioRecognition()
-        
+        Task { await stopAll(finalizeSystem: false) }
+    }
+
+    func stopAll(finalizeSystem: Bool) async {
+        guard capturingInternal || isCapturing else { return }
+
+        capturingInternal = false
+        stopMicCapture()
+
+        micRealtimeTask?.cancel()
+        systemRealtimeTask?.cancel()
+        await micRealtimeTask?.value
+        await systemRealtimeTask?.value
+        micRealtimeTask = nil
+        systemRealtimeTask = nil
+
+        if finalizeSystem {
+            await finalizeMicTranscriptionIfNeeded()
+            await finalizeSystemTranscriptionIfNeeded()
+        }
+
+        micSamples.removeAll(keepingCapacity: true)
+        systemSamples.removeAll(keepingCapacity: true)
+        micRealtimeLastSampleCount = 0
+        systemRealtimeLastSampleCount = 0
+        transcriptionInFlight = false
         isCapturing = false
+    }
+
+    func appendSystemAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
+        guard capturingInternal else { return }
+        guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
+        guard let floats = SystemAudioSampleBufferPCM.extractMonoFloatSamples(from: sampleBuffer) else { return }
+        guard !floats.isEmpty else { return }
+        systemSamples.append(contentsOf: floats)
     }
 
     func reset() {
         micTranscribedText = ""
         systemTranscribedText = ""
-        outputBuffer = ""
-        lastEmittedLine = ""
+        accumulatedMicText = ""
+        lastMicPublishedNormalized = ""
+        lastSystemPublishedNormalized = ""
+        micSamples.removeAll()
+        systemSamples.removeAll()
+        micRealtimeLastSampleCount = 0
+        systemRealtimeLastSampleCount = 0
     }
 
-    func appendSystemAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
-        guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
-        systemRecognitionRequest?.appendAudioSampleBuffer(sampleBuffer)
-    }
+    private func ensureWhisperKitReady() async throws {
+        let modelID = configuredModelID.isEmpty ? Self.defaultModelID() : configuredModelID
+        let variant = Self.modelVariant(forModelID: modelID)
 
-    // MARK: - System Audio Recognition (Apple Speech)
-
-    private func startSystemAudioRecognition() throws {
-        guard let systemSpeechRecognizer = systemSpeechRecognizer,
-              systemSpeechRecognizer.isAvailable else {
-            print("⚠️ System audio recognition unavailable, will only transcribe microphone")
+        if whisperKit != nil, loadedModelVariant == variant {
             return
         }
 
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        if #available(macOS 13.0, *) {
-            request.addsPunctuation = true
-        }
-
-        systemRecognitionRequest = request
-
-        systemRecognitionTask = systemSpeechRecognizer.recognitionTask(with: request) { [weak self] result, error in
-            if let error = error {
-                print("System audio recognition error: \(error.localizedDescription)")
-                return
-            }
-
-            guard let result = result else { return }
-            let newText = result.bestTranscription.formattedString
-            guard !newText.isEmpty else { return }
-
-            Task { @MainActor in
-                self?.systemTranscribedText = newText
-                print("📢 [Others] \(newText)")
-            }
-        }
-    }
-
-    private func stopSystemAudioRecognition() {
-        systemRecognitionTask?.cancel()
-        systemRecognitionTask = nil
-        systemRecognitionRequest?.endAudio()
-        systemRecognitionRequest = nil
-    }
-
-    // MARK: - Output Processing (Whisper Stream)
-
-    private func consumeOutput(data: Data) {
-        guard let chunk = String(data: data, encoding: .utf8), !chunk.isEmpty else { return }
-        outputBuffer.append(chunk)
-
-        while let breakIndex = outputBuffer.firstIndex(where: { $0 == "\n" || $0 == "\r" }) {
-            let line = String(outputBuffer[..<breakIndex])
-            var nextIndex = outputBuffer.index(after: breakIndex)
-            if outputBuffer[breakIndex] == "\r",
-               nextIndex < outputBuffer.endIndex,
-               outputBuffer[nextIndex] == "\n" {
-                nextIndex = outputBuffer.index(after: nextIndex)
-            }
-            outputBuffer = String(outputBuffer[nextIndex...])
-            processLine(line)
-        }
-    }
-
-    private func processLine(_ line: String) {
-        let sanitized = sanitizeConsoleLine(line)
-        let trimmed = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !shouldIgnoreLine(trimmed) else { return }
-
-        guard let text = extractText(from: trimmed), !text.isEmpty else { return }
-        let normalized = normalize(text)
-        guard !normalized.isEmpty, normalized != normalize(lastEmittedLine) else { return }
-
-        lastEmittedLine = text
-        if micTranscribedText.isEmpty {
-            micTranscribedText = text
-        } else {
-            micTranscribedText.append(needsSpace(before: text) ? " \(text)" : text)
-        }
-    }
-
-    private func shouldIgnoreLine(_ line: String) -> Bool {
-        let lower = line.lowercased()
-        return lower.hasPrefix("whisper") || lower.hasPrefix("main") || lower.hasPrefix("system_info")
-            || lower.contains("whisper_print")
-    }
-
-    private func extractText(from line: String) -> String? {
-        if let bracketIndex = line.lastIndex(of: "]") {
-            return String(line[line.index(after: bracketIndex)...]).trimmingCharacters(in: .whitespaces)
-        }
-        return line.trimmingCharacters(in: .whitespaces)
-    }
-
-    private func normalize(_ text: String) -> String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            .split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-    }
-
-    private func needsSpace(before text: String) -> Bool {
-        guard let last = micTranscribedText.last, let first = text.first else { return false }
-        return !last.isWhitespace && !first.isWhitespace
-    }
-
-    private func sanitizeConsoleLine(_ line: String) -> String {
-        let nsLine = line as NSString
-        let range = NSRange(location: 0, length: nsLine.length)
-        let withoutAnsi = Self.ansiEscapeRegex.stringByReplacingMatches(
-            in: line,
-            options: [],
-            range: range,
-            withTemplate: ""
+        let modelFolder = try await Self.downloadModel(named: modelID)
+        var config = WhisperKitConfig(
+            model: variant,
+            modelRepo: "argmaxinc/whisperkit-coreml",
+            modelFolder: modelFolder.path,
+            prewarm: false,
+            load: true,
+            download: false,
+            useBackgroundDownloadSession: true
         )
-        let filteredScalars = withoutAnsi.unicodeScalars.filter { scalar in
-            let value = scalar.value
-            return value == 0x09 || (value >= 0x20 && value != 0x7F)
-        }
-        return String(String.UnicodeScalarView(filteredScalars))
+        config.logLevel = .info
+        config.verbose = false
+
+        whisperKit = try await WhisperKit(config)
+        loadedModelVariant = variant
+        UserDefaults.standard.set(modelID, forKey: Self.modelSelectionKey)
     }
 
-    // MARK: - Model Management
+    private func startMicCapture() {
+        guard !audioEngine.isRunning else { return }
+        let inputNode = audioEngine.inputNode
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+        inputNode.removeTap(onBus: 0)
 
-    private func downloadModel(to path: String) async throws {
-        let modelName = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
-            .replacingOccurrences(of: "ggml-", with: "")
-        
-        guard let downloadURL = Self.downloadURL(for: modelName) else {
-            throw LocalWhisperError.modelDownloadFailed("Invalid model name: \(modelName)")
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+            guard let self else { return }
+            guard self.capturingInternal else { return }
+            guard let converted = try? self.audioConverter.resampleBuffer(buffer) else { return }
+            guard !converted.isEmpty else { return }
+            Task { @MainActor [weak self] in
+                self?.micSamples.append(contentsOf: converted)
+            }
         }
 
-        let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
-        let (tempURL, _) = try await URLSession.shared.download(from: downloadURL)
-        
-        if FileManager.default.fileExists(atPath: path) {
-            try? FileManager.default.removeItem(atPath: path)
-        }
-        try FileManager.default.moveItem(at: tempURL, to: URL(fileURLWithPath: path))
+        audioEngine.prepare()
+        try? audioEngine.start()
     }
 
-    // MARK: - Static Helpers
+    private func stopMicCapture() {
+        guard audioEngine.isRunning else { return }
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.stop()
+    }
 
-    static func defaultModelDirectory() -> URL {
+    private func startRealtimeLoops() {
+        if micRealtimeTask == nil {
+            micRealtimeTask = Task { [weak self] in
+                await self?.runMicRealtimeLoop()
+            }
+        }
+        if systemRealtimeTask == nil {
+            systemRealtimeTask = Task { [weak self] in
+                await self?.runSystemRealtimeLoop()
+            }
+        }
+    }
+
+    private func runMicRealtimeLoop() async {
+        while !Task.isCancelled {
+            guard capturingInternal else { break }
+            do {
+                try await Task.sleep(nanoseconds: UInt64(realtimeIntervalSeconds * 1_000_000_000))
+            } catch {
+                break
+            }
+
+            guard capturingInternal else { break }
+            let snapshot = micSamples
+            let snapshotCount = snapshot.count
+            guard snapshotCount >= realtimeMinInitialSamples else { continue }
+            guard snapshotCount - micRealtimeLastSampleCount >= realtimeMinNewSamples || micRealtimeLastSampleCount == 0 else { continue }
+
+            let tail = snapshotCount > realtimeWindowSamples
+                ? Array(snapshot.suffix(realtimeWindowSamples))
+                : snapshot
+            guard !tail.isEmpty else { continue }
+
+            let recentCount = min(realtimeRecentActivitySamples, tail.count)
+            let recentTail = Array(tail.suffix(recentCount))
+            guard Self.rootMeanSquare(of: recentTail) >= realtimeSilenceRMSThreshold else {
+                micRealtimeLastSampleCount = snapshotCount
+                continue
+            }
+
+            micRealtimeLastSampleCount = snapshotCount
+            do {
+                let text = try await transcribe(samples: tail)
+                guard !text.isEmpty else { continue }
+                let normalized = Self.normalize(text)
+                guard normalized != lastMicPublishedNormalized else { continue }
+                lastMicPublishedNormalized = normalized
+                accumulatedMicText = appendWithBoundarySmoothing(accumulatedMicText, text)
+                micTranscribedText = accumulatedMicText
+            } catch {
+                if !Task.isCancelled {
+                    print("⚠️ [WhisperKit] Realtime mic transcription failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func runSystemRealtimeLoop() async {
+        while !Task.isCancelled {
+            guard capturingInternal else { break }
+            do {
+                try await Task.sleep(nanoseconds: UInt64(realtimeIntervalSeconds * 1_000_000_000))
+            } catch {
+                break
+            }
+
+            guard capturingInternal else { break }
+            let snapshot = systemSamples
+            let snapshotCount = snapshot.count
+            guard snapshotCount >= realtimeMinInitialSamples else { continue }
+            guard snapshotCount - systemRealtimeLastSampleCount >= realtimeMinNewSamples || systemRealtimeLastSampleCount == 0 else { continue }
+
+            let tail = snapshotCount > realtimeWindowSamples
+                ? Array(snapshot.suffix(realtimeWindowSamples))
+                : snapshot
+            guard !tail.isEmpty else { continue }
+
+            let recentCount = min(realtimeRecentActivitySamples, tail.count)
+            let recentTail = Array(tail.suffix(recentCount))
+            guard Self.rootMeanSquare(of: recentTail) >= realtimeSilenceRMSThreshold else {
+                systemRealtimeLastSampleCount = snapshotCount
+                continue
+            }
+
+            systemRealtimeLastSampleCount = snapshotCount
+            do {
+                let raw = try await transcribe(samples: tail)
+                guard !raw.isEmpty else { continue }
+                let text = normalizeSystemText(raw)
+                guard !text.isEmpty, text != lastSystemPublishedNormalized else { continue }
+                lastSystemPublishedNormalized = text
+                systemTranscribedText = text
+            } catch {
+                if !Task.isCancelled {
+                    print("⚠️ [WhisperKit] Realtime system transcription failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func finalizeMicTranscriptionIfNeeded() async {
+        guard !micSamples.isEmpty else { return }
+        do {
+            let text = try await transcribe(samples: micSamples)
+            guard !text.isEmpty else { return }
+            let normalized = Self.normalize(text)
+            guard normalized != lastMicPublishedNormalized else { return }
+            accumulatedMicText = appendWithBoundarySmoothing(accumulatedMicText, text)
+            lastMicPublishedNormalized = normalized
+            micTranscribedText = accumulatedMicText
+        } catch {
+            print("⚠️ [WhisperKit] Final mic transcription failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func finalizeSystemTranscriptionIfNeeded() async {
+        guard !systemSamples.isEmpty else { return }
+        do {
+            let raw = try await transcribe(samples: systemSamples)
+            let text = normalizeSystemText(raw)
+            guard !text.isEmpty else { return }
+            systemTranscribedText = text
+        } catch {
+            print("⚠️ [WhisperKit] Final system transcription failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func transcribe(samples: [Float]) async throws -> String {
+        guard !transcriptionInFlight else { return "" }
+        guard let whisperKit else {
+            throw LocalWhisperError.transcriptionFailed("WhisperKit not initialized")
+        }
+
+        transcriptionInFlight = true
+        defer { transcriptionInFlight = false }
+
+        let options = DecodingOptions(
+            task: .transcribe,
+            language: "en",
+            withoutTimestamps: false,
+            wordTimestamps: false
+        )
+        let results = try await whisperKit.transcribe(audioArray: samples, decodeOptions: options)
+        let text = results
+            .map(\.text)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text
+    }
+
+    private func normalizeSystemText(_ rawText: String) -> String {
+        var text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let last = text.last, !".!?".contains(last) {
+            text.append(".")
+        }
+        return text
+    }
+
+    private func appendWithBoundarySmoothing(_ existing: String, _ addition: String) -> String {
+        guard !addition.isEmpty else { return existing }
+        guard !existing.isEmpty else { return addition }
+
+        let maxSuffixChars = 48
+        let suffix = String(existing.suffix(maxSuffixChars))
+        if addition.hasPrefix(suffix) {
+            let trimmed = String(addition.dropFirst(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { return existing }
+            return existing + " " + trimmed
+        }
+
+        if existing.last?.isWhitespace == true {
+            return existing + addition
+        }
+        return existing + " " + addition
+    }
+
+    private static func rootMeanSquare(of samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return 0 }
+        var sum: Float = 0
+        for x in samples {
+            sum += x * x
+        }
+        return sqrt(sum / Float(samples.count))
+    }
+
+    private static func normalize(_ text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+    }
+
+    static func defaultModelID() -> String {
+        "small"
+    }
+
+    static func modelStorageDirectory() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory())
-        return base.appendingPathComponent("sniff/whisper/models")
+        return base.appendingPathComponent("sniff/whisperkit/models", isDirectory: true)
     }
 
-    static func defaultModelPath() -> String {
-        defaultModelDirectory().appendingPathComponent("ggml-base.en.bin").path
+    static func modelVariant(forModelID modelID: String) -> String {
+        switch normalizedModelID(from: modelID) {
+        case "turbo":
+            return "large-v3_turbo"
+        case "large":
+            return "large-v3"
+        default:
+            return normalizedModelID(from: modelID)
+        }
     }
 
-    static func modelURL(for name: String) -> URL {
-        defaultModelDirectory().appendingPathComponent("ggml-\(name).bin")
+    static func normalizedModelID(from value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        var model = trimmed
+        if model.hasPrefix("ggml-") {
+            model.removeFirst("ggml-".count)
+        }
+        if model.hasSuffix(".bin") {
+            model.removeLast(".bin".count)
+        }
+        if model.hasPrefix("openai_whisper-") {
+            model.removeFirst("openai_whisper-".count)
+        }
+        if let underscoreIndex = model.firstIndex(of: "_"), model[underscoreIndex...].contains("MB") {
+            model = String(model[..<underscoreIndex])
+        }
+        return model
     }
 
-    static func downloadURL(for name: String) -> URL? {
-        URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-\(name).bin")
+    static func downloadModel(named modelID: String) async throws -> URL {
+        let normalizedID = normalizedModelID(from: modelID)
+        guard !normalizedID.isEmpty else {
+            throw LocalWhisperError.modelDownloadFailed("Invalid model ID")
+        }
+
+        let base = modelStorageDirectory()
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+
+        let variant = modelVariant(forModelID: normalizedID)
+        let path = try await WhisperKit.download(
+            variant: variant,
+            downloadBase: base,
+            useBackgroundSession: true,
+            from: "argmaxinc/whisperkit-coreml"
+        )
+        rememberDownloadedModel(id: normalizedID, path: path.path)
+        return path
     }
 
     static func listDownloadedModels() -> [String] {
-        let dir = defaultModelDirectory()
-        guard let items = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return [] }
-        return items.filter { $0.hasPrefix("ggml-") && $0.hasSuffix(".bin") }.sorted()
+        let map = cleanedDownloadedModelMap()
+        return map.keys.sorted()
     }
 
-    static func sizeStringForModelFile(_ filename: String) -> String? {
-        let url = defaultModelDirectory().appendingPathComponent(filename)
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let size = attrs[.size] as? Int64 else { return nil }
+    static func isModelDownloaded(_ modelID: String) -> Bool {
+        cleanedDownloadedModelMap().keys.contains(normalizedModelID(from: modelID))
+    }
+
+    static func sizeStringForDownloadedModel(_ modelID: String) -> String? {
+        let normalizedID = normalizedModelID(from: modelID)
+        let map = cleanedDownloadedModelMap()
+        guard let path = map[normalizedID] else { return nil }
+        let url = URL(fileURLWithPath: path)
+        guard let size = directorySizeInBytes(at: url) else { return nil }
         return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 
     static func estimatedSizeString(for modelName: String) -> String? {
-        guard let bytes = estimatedModelSizes[modelName] else { return nil }
+        guard let bytes = estimatedModelSizes[normalizedModelID(from: modelName)] else { return nil }
         return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
-    static func detectBinaryPath() -> String? {
-        let candidates = [
-            "/opt/homebrew/bin/whisper-stream",
-            "/usr/local/bin/whisper-stream",
-            "\(NSHomeDirectory())/whisper.cpp/build/bin/whisper-stream",
-            "\(NSHomeDirectory())/Desktop/Projects/sniff/whisper.cpp/build/bin/whisper-stream"
-        ]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    private static func downloadedModelPathMap() -> [String: String] {
+        UserDefaults.standard.dictionary(forKey: downloadedModelPathMapKey) as? [String: String] ?? [:]
     }
 
-    static func validateBinaryPath(_ path: String) -> Bool {
-        let expanded = (path as NSString).expandingTildeInPath
-        return FileManager.default.isExecutableFile(atPath: expanded)
+    private static func rememberDownloadedModel(id: String, path: String) {
+        var map = downloadedModelPathMap()
+        map[id] = path
+        UserDefaults.standard.set(map, forKey: downloadedModelPathMapKey)
     }
 
-    static func testBinary(at path: String) throws {
-        let expanded = (path as NSString).expandingTildeInPath
-        
-        guard FileManager.default.isExecutableFile(atPath: expanded) else {
-            throw LocalWhisperError.binaryNotFound(expanded)
+    private static func cleanedDownloadedModelMap() -> [String: String] {
+        let existing = downloadedModelPathMap()
+        var cleaned: [String: String] = [:]
+        for (id, path) in existing {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
+                cleaned[id] = path
+            }
+        }
+        if cleaned != existing {
+            UserDefaults.standard.set(cleaned, forKey: downloadedModelPathMapKey)
+        }
+        return cleaned
+    }
+
+    private static func directorySizeInBytes(at url: URL) -> Int64? {
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: expanded)
-        process.arguments = ["--help"]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            throw LocalWhisperError.launchFailed("Binary test failed with status \(process.terminationStatus)")
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey]) else {
+                continue
+            }
+            guard values.isRegularFile == true else { continue }
+            if let allocated = values.totalFileAllocatedSize ?? values.fileAllocatedSize {
+                total += Int64(allocated)
+            }
         }
+        return total
     }
 }
 
 enum LocalWhisperError: Error, LocalizedError {
-    case binaryNotFound(String)
     case modelDownloadFailed(String)
-    case launchFailed(String)
+    case transcriptionFailed(String)
 
     var errorDescription: String? {
         switch self {
-        case .binaryNotFound(let path):
-            return "Whisper binary not found at \(path)"
         case .modelDownloadFailed(let message):
-            return "Failed to download model: \(message)"
-        case .launchFailed(let message):
-            return "Failed to launch whisper: \(message)"
+            return "Failed to download Whisper model: \(message)"
+        case .transcriptionFailed(let message):
+            return "Whisper transcription failed: \(message)"
         }
     }
 }

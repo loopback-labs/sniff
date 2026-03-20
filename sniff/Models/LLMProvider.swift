@@ -9,7 +9,7 @@ enum LLMProvider: String, CaseIterable, Identifiable {
     case openai = "openai"
     case claude = "claude"
     case gemini = "gemini"
-    case perplexity = "perplexity"
+    case chatgpt = "chatgpt"
     
     var id: String { rawValue }
     
@@ -18,7 +18,15 @@ enum LLMProvider: String, CaseIterable, Identifiable {
         case .openai: return "OpenAI"
         case .claude: return "Claude"
         case .gemini: return "Gemini"
-        case .perplexity: return "Perplexity"
+        case .chatgpt: return "ChatGPT"
+        }
+    }
+
+    /// API key in Keychain vs OAuth (ChatGPT).
+    var usesOAuth: Bool {
+        switch self {
+        case .chatgpt: return true
+        case .openai, .claude, .gemini: return false
         }
     }
     
@@ -47,6 +55,8 @@ enum LLMError: Error {
     case invalidResponse
     case httpError(Int)
     case apiError(String)
+    /// Selected model does not support image input (screen questions).
+    case imageInputNotSupportedByModel(String)
 }
 
 extension LLMError: LocalizedError {
@@ -57,6 +67,8 @@ extension LLMError: LocalizedError {
         case .invalidResponse: return "Invalid response from server."
         case .httpError(let code): return "HTTP \(code).\(code == 401 ? " Check your API key in Settings." : "")"
         case .apiError(let message): return message
+        case .imageInputNotSupportedByModel(let model):
+            return "The selected model \"\(model)\" does not support image input. Choose a vision-capable model in Settings or use audio questions only."
         }
     }
 }

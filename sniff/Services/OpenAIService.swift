@@ -6,7 +6,10 @@
 import Foundation
 
 class OpenAIService: BaseLLMService {
-    init(apiKey: String) {
+    private let model: String
+
+    init(apiKey: String, model: String) {
+        self.model = model
         super.init(apiKey: apiKey, baseURL: "https://api.openai.com/v1/chat/completions")
     }
 
@@ -31,7 +34,7 @@ class OpenAIService: BaseLLMService {
     override func buildImageRequestBody(prompt: String, imageData: Data) -> [String: Any] {
         let dataURL = "data:image/jpeg;base64,\(imageData.base64EncodedString())"
         return [
-            "model": "gpt-4o",
+            "model": model,
             "messages": [
                 [
                     "role": "user",

@@ -18,11 +18,12 @@ struct SettingsView: View {
     @State private var selectedDeviceID: AudioDeviceID = 0
     @State private var showingAlert = false
     @State private var alertMessage = ""
-    @State private var whisperBinaryPath: String = ""
-    @State private var whisperModelPath: String = ""
+    @State private var whisperModelID: String = LocalWhisperService.defaultModelID()
     @State private var downloadedModels: [String] = []
     @State private var downloadingModelName: String?
     @State private var modelSizes: [String: String] = [:]
+    /// Bumps to refresh ChatGPT auth UI when session changes.
+    @State private var chatGPTAuthUIVersion = 0
     private let keychainService = KeychainService()
     
     private var audioDeviceService: AudioDeviceService { coordinator.audioDeviceService }
@@ -45,14 +46,33 @@ struct SettingsView: View {
                                 Text(provider.displayName).tag(provider)
                             }
                         }
-                        .pickerStyle(.segmented)
+                        .pickerStyle(.menu)
                         .onChange(of: coordinator.selectedProvider) { _, _ in
                             loadAPIKey()
                         }
                     }
-                    
-                    // MARK: - API Key
+
+                    // MARK: - LLM Model
                     VStack(alignment: .leading, spacing: 8) {
+                        Text("Model")
+                            .font(.headline)
+                        Picker("Model", selection: $coordinator.selectedModelId) {
+                            ForEach(LLMModelCatalog.models(for: coordinator.selectedProvider)) { option in
+                                Text(option.displayName).tag(option.id)
+                            }
+                        }
+                        .labelsHidden()
+                        Text("Screen questions require a vision-capable model for this provider.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    // MARK: - API Key / ChatGPT
+                    VStack(alignment: .leading, spacing: 8) {
+                        if coordinator.selectedProvider == .chatgpt {
+                            chatGPTAuthSection
+                                .id(chatGPTAuthUIVersion)
+                        } else {
                         Text("\(coordinator.selectedProvider.displayName) API Key")
                             .font(.headline)
 
@@ -102,6 +122,7 @@ struct SettingsView: View {
                                 }
                             }
                         }
+                        }
                     }
                     
                     Divider()
@@ -118,12 +139,18 @@ struct SettingsView: View {
                         }
                         .pickerStyle(.segmented)
 
-                        Text("Both engines transcribe microphone + system audio by default.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Text(coordinator.selectedSpeechEngine == .whisper
+                             ? "WhisperKit runs on-device for both microphone and system audio, with on-demand model downloads."
+                             : "Parakeet transcribes microphone + system audio (FluidAudio).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         
                         if coordinator.selectedSpeechEngine == .whisper {
                             whisperSettingsSection
+                        }
+
+                        if coordinator.selectedSpeechEngine == .parakeet {
+                            parakeetSettingsSection
                         }
                     }
                     
@@ -184,28 +211,6 @@ struct SettingsView: View {
     @ViewBuilder
     private var whisperSettingsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Whisper Binary")
-                .font(.subheadline)
-            
-            HStack {
-                TextField("Path to whisper-stream", text: $whisperBinaryPath)
-                    .textFieldStyle(.roundedBorder)
-                
-                Button("Browse") { chooseWhisperBinary() }
-                    .buttonStyle(.bordered)
-            }
-            
-            if !whisperBinaryPath.isEmpty {
-                let isValid = LocalWhisperService.validateBinaryPath(whisperBinaryPath)
-                HStack {
-                    Image(systemName: isValid ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundColor(isValid ? .green : .red)
-                    Text(isValid ? "Binary found" : "Binary not found")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            
             Text("Whisper Model")
                 .font(.subheadline)
                 .padding(.top, 4)
@@ -215,15 +220,33 @@ struct SettingsView: View {
             }
             
             HStack {
-                Button("Test Whisper Setup") { testWhisperSetup() }
-                    .buttonStyle(.borderedProminent)
-                
-                Button("Save Paths") { saveWhisperPaths() }
+                Button("Save Model") { saveWhisperPaths() }
                     .buttonStyle(.bordered)
             }
             .padding(.top, 4)
+
+            Text("Models are downloaded on demand to app-scoped storage.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Parakeet Settings Section
+
+    @ViewBuilder
+    private var parakeetSettingsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Parakeet Model")
+                .font(.subheadline)
             
-            Text("Install via: brew install whisper-cpp")
+            Picker("Parakeet Model", selection: $coordinator.selectedParakeetModelChoice) {
+                ForEach(ParakeetModelChoice.allCases) { choice in
+                    Text(choice.displayName).tag(choice)
+                }
+            }
+            .pickerStyle(.segmented)
+            
+            Text("Models run locally via FluidAudio.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -231,13 +254,12 @@ struct SettingsView: View {
     
     @ViewBuilder
     private func modelRow(for name: String) -> some View {
-        let filename = "ggml-\(name).bin"
-        let isDownloaded = downloadedModels.contains(filename)
-        let isSelected = whisperModelPath.hasSuffix(filename)
+        let isDownloaded = downloadedModels.contains(name)
+        let isSelected = whisperModelID == name
         
         HStack {
             let sizeText = isDownloaded
-                ? modelSizes[filename]
+                ? modelSizes[name]
                 : LocalWhisperService.estimatedSizeString(for: name).map { "~\($0)" }
             
             Text(sizeText == nil ? name : "\(name) (\(sizeText!))")
@@ -247,7 +269,7 @@ struct SettingsView: View {
             
             if isDownloaded {
                 Button(isSelected ? "Using" : "Use") {
-                    whisperModelPath = LocalWhisperService.modelURL(for: name).path
+                    whisperModelID = name
                     saveWhisperPaths()
                 }
                 .buttonStyle(.bordered)
@@ -262,9 +284,68 @@ struct SettingsView: View {
         }
     }
     
+    // MARK: - ChatGPT OAuth
+
+    @ViewBuilder
+    private var chatGPTAuthSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("ChatGPT account")
+                .font(.headline)
+            if coordinator.chatGPTAuthManager.isSignedIn {
+                if let hint = coordinator.chatGPTAuthManager.accountHint, !hint.isEmpty {
+                    Text("Session active (\(hint))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Signed in")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Button("Sign out") {
+                    coordinator.chatGPTAuthManager.signOut()
+                    coordinator.refreshLLMAfterChatGPTAuth()
+                    chatGPTAuthUIVersion += 1
+                    alertMessage = "Signed out"
+                    showingAlert = true
+                }
+                .buttonStyle(.bordered)
+            } else {
+                Text("Sign in with your ChatGPT account (OAuth).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Sign in with ChatGPT") {
+                    Task {
+                        do {
+                            try await coordinator.chatGPTAuthManager.signInWithBrowser()
+                            await MainActor.run {
+                                coordinator.refreshLLMAfterChatGPTAuth()
+                                chatGPTAuthUIVersion += 1
+                                alertMessage = "Signed in successfully"
+                                showingAlert = true
+                            }
+                        } catch {
+                            await MainActor.run {
+                                alertMessage = error.localizedDescription
+                                showingAlert = true
+                            }
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
     // MARK: - API Key Management
     
     private func loadAPIKey() {
+        guard !coordinator.selectedProvider.usesOAuth else {
+            apiKey = ""
+            hasStoredAPIKey = false
+            isEditingAPIKey = false
+            isViewingAPIKey = false
+            return
+        }
         let stored = keychainService.getAPIKey(for: coordinator.selectedProvider)
         apiKey = stored ?? ""
         hasStoredAPIKey = stored != nil && !stored!.isEmpty
@@ -313,6 +394,7 @@ struct SettingsView: View {
     }
 
     private func clearAPIKey() {
+        guard !coordinator.selectedProvider.usesOAuth else { return }
         do {
             try keychainService.deleteAPIKey(for: coordinator.selectedProvider)
             apiKey = ""
@@ -328,76 +410,28 @@ struct SettingsView: View {
         }
     }
     
-    // MARK: - Whisper Path Management
+    // MARK: - Whisper Model Management
     
     private func loadWhisperPaths() {
-        // Load stored paths or auto-detect
-        let storedBinaryPath = UserDefaults.standard.string(forKey: "whisperBinaryPath") ?? ""
-        let storedModelPath = UserDefaults.standard.string(forKey: "whisperModelPath") ?? ""
-        
-        // Use stored path if valid, otherwise auto-detect
-        if !storedBinaryPath.isEmpty && LocalWhisperService.validateBinaryPath(storedBinaryPath) {
-            whisperBinaryPath = storedBinaryPath
-        } else if let detected = LocalWhisperService.detectBinaryPath() {
-            whisperBinaryPath = detected
-        }
-        
-        // Use stored model path if exists, otherwise use default
-        if !storedModelPath.isEmpty && FileManager.default.fileExists(atPath: storedModelPath) {
-            whisperModelPath = storedModelPath
+        let storedModelID = UserDefaults.standard.string(forKey: LocalWhisperService.modelSelectionKey) ?? ""
+        if storedModelID.isEmpty {
+            whisperModelID = LocalWhisperService.defaultModelID()
         } else {
-            whisperModelPath = LocalWhisperService.defaultModelPath()
+            whisperModelID = LocalWhisperService.normalizedModelID(from: storedModelID)
         }
     }
     
     private func saveWhisperPaths() {
-        guard !whisperBinaryPath.isEmpty else {
-            alertMessage = "Whisper binary path cannot be empty"
+        let normalized = LocalWhisperService.normalizedModelID(from: whisperModelID)
+        guard LocalWhisperService.availableModelNames.contains(normalized) else {
+            alertMessage = "Invalid Whisper model selection"
             showingAlert = true
             return
         }
-        
-        UserDefaults.standard.set(whisperBinaryPath, forKey: "whisperBinaryPath")
-        UserDefaults.standard.set(whisperModelPath, forKey: "whisperModelPath")
-        alertMessage = "Whisper paths saved"
+        UserDefaults.standard.set(normalized, forKey: LocalWhisperService.modelSelectionKey)
+        whisperModelID = normalized
+        alertMessage = "Whisper model saved"
         showingAlert = true
-    }
-    
-    private func chooseWhisperBinary() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Select whisper-stream binary"
-        
-        // Start in a sensible directory
-        if !whisperBinaryPath.isEmpty {
-            let url = URL(fileURLWithPath: (whisperBinaryPath as NSString).expandingTildeInPath)
-            panel.directoryURL = url.deletingLastPathComponent()
-        } else {
-            panel.directoryURL = URL(fileURLWithPath: "/opt/homebrew/bin")
-        }
-        
-        if panel.runModal() == .OK, let url = panel.url {
-            whisperBinaryPath = url.path
-        }
-    }
-    
-    private func testWhisperSetup() {
-        guard !whisperBinaryPath.isEmpty else {
-            alertMessage = "Please set the whisper binary path first"
-            showingAlert = true
-            return
-        }
-        
-        do {
-            try LocalWhisperService.testBinary(at: whisperBinaryPath)
-            alertMessage = "Whisper binary OK!"
-            showingAlert = true
-        } catch {
-            alertMessage = error.localizedDescription
-            showingAlert = true
-        }
     }
     
     // MARK: - Model Management
@@ -406,7 +440,7 @@ struct SettingsView: View {
         downloadedModels = LocalWhisperService.listDownloadedModels()
         var sizes: [String: String] = [:]
         for model in downloadedModels {
-            if let size = LocalWhisperService.sizeStringForModelFile(model) {
+            if let size = LocalWhisperService.sizeStringForDownloadedModel(model) {
                 sizes[model] = size
             }
         }
@@ -414,33 +448,16 @@ struct SettingsView: View {
     }
     
     private func downloadModel(named name: String) {
-        guard let downloadURL = LocalWhisperService.downloadURL(for: name) else {
-            alertMessage = "Invalid model name"
-            showingAlert = true
-            return
-        }
-        
         downloadingModelName = name
-        let destination = LocalWhisperService.modelURL(for: name)
         
         Task {
             do {
-                try FileManager.default.createDirectory(
-                    at: destination.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                
-                let (tempURL, _) = try await URLSession.shared.download(from: downloadURL)
-                
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try? FileManager.default.removeItem(at: destination)
-                }
-                try FileManager.default.moveItem(at: tempURL, to: destination)
+                _ = try await LocalWhisperService.downloadModel(named: name)
                 
                 await MainActor.run {
                     downloadingModelName = nil
                     listDownloadedModels()
-                    whisperModelPath = destination.path
+                    whisperModelID = name
                     saveWhisperPaths()
                     alertMessage = "Downloaded \(name) model"
                     showingAlert = true

@@ -15,13 +15,14 @@ import HotKey
 @MainActor
 class AppCoordinator: ObservableObject {
     let screenCaptureService = ScreenCaptureService()
-    let audioCaptureService = AudioCaptureService()
     let localWhisperService = LocalWhisperService()
+    let parakeetService = ParakeetTranscriptionService()
     let audioDeviceService = AudioDeviceService()
     let questionDetectionService = QuestionDetectionService()
     let qaManager = QAManager()
     let transcriptBuffer = TranscriptBuffer()
     let keychainService = KeychainService()
+    let chatGPTAuthManager = ChatGPTAuthManager()
     
     private var llmService: LLMService?
     private var qaOverlayWindow: NSWindow?
@@ -32,10 +33,10 @@ class AppCoordinator: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var screenCaptureSubscription: AnyCancellable?
     private let audioQuestionPipeline: AudioQuestionPipeline
-    private let appleMicDeltaProcessor = TranscriptionDeltaProcessor()
-    private let appleSystemDeltaProcessor = TranscriptionDeltaProcessor()
     private let whisperMicDeltaProcessor = TranscriptionDeltaProcessor()
     private let whisperSystemDeltaProcessor = TranscriptionDeltaProcessor()
+    private let parakeetMicDeltaProcessor = TranscriptionDeltaProcessor()
+    private let parakeetSystemDeltaProcessor = TranscriptionDeltaProcessor()
     
     @Published var isRunning = false
     @Published var automaticMode = false {
@@ -54,6 +55,19 @@ class AppCoordinator: ObservableObject {
     @Published var selectedProvider: LLMProvider {
         didSet {
             UserDefaults.standard.set(selectedProvider.rawValue, forKey: "selectedLLMProvider")
+            let next = LLMModelCatalog.loadOrDefaultModelId(for: selectedProvider)
+            if next != selectedModelId {
+                selectedModelId = next
+            } else {
+                rebuildLLMService()
+            }
+        }
+    }
+
+    @Published var selectedModelId: String = "" {
+        didSet {
+            guard !selectedModelId.isEmpty else { return }
+            LLMModelCatalog.saveModelId(selectedModelId, for: selectedProvider)
             rebuildLLMService()
         }
     }
@@ -61,6 +75,15 @@ class AppCoordinator: ObservableObject {
         didSet {
             UserDefaults.standard.set(selectedSpeechEngine.rawValue, forKey: "selectedSpeechEngine")
             if isRunning {
+                Task { await restartSpeechCapture() }
+            }
+        }
+    }
+
+    @Published var selectedParakeetModelChoice: ParakeetModelChoice {
+        didSet {
+            UserDefaults.standard.set(selectedParakeetModelChoice.rawValue, forKey: "selectedParakeetModelChoice")
+            if isRunning && selectedSpeechEngine == .parakeet {
                 Task { await restartSpeechCapture() }
             }
         }
@@ -73,13 +96,18 @@ class AppCoordinator: ObservableObject {
     }
     
     init() {
-        let savedProvider = UserDefaults.standard.string(forKey: "selectedLLMProvider") ?? LLMProvider.perplexity.rawValue
-        selectedProvider = LLMProvider(rawValue: savedProvider) ?? .perplexity
+        let savedProvider = UserDefaults.standard.string(forKey: "selectedLLMProvider") ?? LLMProvider.openai.rawValue
+        let initialLLMProvider = LLMProvider(rawValue: savedProvider) ?? .openai
+        selectedProvider = initialLLMProvider
         showOverlay = UserDefaults.standard.object(forKey: "showOverlay") as? Bool ?? true
-        let savedSpeechEngine = UserDefaults.standard.string(forKey: "selectedSpeechEngine") ?? SpeechEngine.apple.rawValue
-        selectedSpeechEngine = SpeechEngine(rawValue: savedSpeechEngine) ?? .apple
+        let savedSpeechEngine = UserDefaults.standard.string(forKey: "selectedSpeechEngine") ?? SpeechEngine.whisper.rawValue
+        selectedSpeechEngine = SpeechEngine(rawValue: savedSpeechEngine) ?? .whisper
+        let savedParakeetModel = UserDefaults.standard.string(forKey: "selectedParakeetModelChoice") ?? ParakeetModelChoice.v3Multilingual.rawValue
+        selectedParakeetModelChoice = ParakeetModelChoice(rawValue: savedParakeetModel) ?? .v3Multilingual
         
         audioQuestionPipeline = AudioQuestionPipeline(questionDetectionService: questionDetectionService)
+
+        selectedModelId = LLMModelCatalog.loadOrDefaultModelId(for: initialLLMProvider)
         
         rebuildLLMService()
         applySavedAudioInputDevice()
@@ -100,33 +128,49 @@ class AppCoordinator: ObservableObject {
     }
     
     func rebuildLLMService() {
-        guard let apiKey = keychainService.getAPIKey(for: selectedProvider) else {
-            llmService = nil
-            return
-        }
+        let modelId = selectedModelId.isEmpty
+            ? LLMModelCatalog.loadOrDefaultModelId(for: selectedProvider)
+            : selectedModelId
+
         switch selectedProvider {
+        case .chatgpt:
+            guard chatGPTAuthManager.isSignedIn else {
+                llmService = nil
+                return
+            }
+            llmService = ChatGPTService(model: modelId, authManager: chatGPTAuthManager)
         case .openai:
-            llmService = OpenAIService(apiKey: apiKey)
+            guard let apiKey = keychainService.getAPIKey(for: .openai), !apiKey.isEmpty else {
+                llmService = nil
+                return
+            }
+            llmService = OpenAIService(apiKey: apiKey, model: modelId)
         case .claude:
-            llmService = ClaudeService(apiKey: apiKey)
+            guard let apiKey = keychainService.getAPIKey(for: .claude), !apiKey.isEmpty else {
+                llmService = nil
+                return
+            }
+            llmService = ClaudeService(apiKey: apiKey, model: modelId)
         case .gemini:
-            llmService = GeminiService(apiKey: apiKey)
-        case .perplexity:
-            llmService = PerplexityService(apiKey: apiKey)
+            guard let apiKey = keychainService.getAPIKey(for: .gemini), !apiKey.isEmpty else {
+                llmService = nil
+                return
+            }
+            llmService = GeminiService(apiKey: apiKey, model: modelId)
         }
     }
 
     private func currentSourcePublishers() -> [(speaker: TranscriptSpeaker, publisher: AnyPublisher<String, Never>)] {
         switch selectedSpeechEngine {
-        case .apple:
-            return [
-                (.you, audioCaptureService.$micTranscribedText.eraseToAnyPublisher()),
-                (.others, audioCaptureService.$systemTranscribedText.eraseToAnyPublisher())
-            ]
         case .whisper:
             return [
                 (.you, localWhisperService.$micTranscribedText.eraseToAnyPublisher()),
                 (.others, localWhisperService.$systemTranscribedText.eraseToAnyPublisher())
+            ]
+        case .parakeet:
+            return [
+                (.you, parakeetService.$micTranscribedText.eraseToAnyPublisher()),
+                (.others, parakeetService.$systemTranscribedText.eraseToAnyPublisher())
             ]
         }
     }
@@ -138,27 +182,28 @@ class AppCoordinator: ObservableObject {
 
     private func startSpeechCapture(using engine: SpeechEngine) async throws {
         switch engine {
-        case .apple:
-            try audioCaptureService.startCapture()
         case .whisper:
             configureWhisperService()
             try await localWhisperService.startCapture()
+        case .parakeet:
+            configureParakeetService()
+            try await parakeetService.startCapture()
         }
     }
 
-    private func stopSpeechCapture() {
-        audioCaptureService.stopCapture()
-        localWhisperService.stopCapture()
+    private func stopSpeechCapture(finalizeSystem: Bool) async {
+        await localWhisperService.stopAll(finalizeSystem: finalizeSystem)
+        await parakeetService.stopCapture(finalizeSystem: finalizeSystem)
     }
 
     private func restartSpeechCapture() async {
         guard isRunning else { return }
 
         let engineForSystemAudio = selectedSpeechEngine
-        stopSpeechCapture()
+        await stopSpeechCapture(finalizeSystem: false)
         resetDeltaProcessors()
-        audioCaptureService.reset()
         localWhisperService.reset()
+        parakeetService.reset()
         cancellables.removeAll()
         setupSubscriptions()
         do {
@@ -178,29 +223,15 @@ class AppCoordinator: ObservableObject {
     }
 
     private func configureWhisperService() {
-        // Get stored paths or auto-detect
-        let storedBinaryPath = UserDefaults.standard.string(forKey: "whisperBinaryPath") ?? ""
-        let storedModelPath = UserDefaults.standard.string(forKey: "whisperModelPath") ?? ""
-        
-        // Use stored path if valid, otherwise auto-detect
-        let binaryPath: String
-        if !storedBinaryPath.isEmpty && LocalWhisperService.validateBinaryPath(storedBinaryPath) {
-            binaryPath = storedBinaryPath
-        } else if let detected = LocalWhisperService.detectBinaryPath() {
-            binaryPath = detected
-        } else {
-            binaryPath = "/opt/homebrew/bin/whisper-stream"
-        }
-        
-        // Use stored model path if exists, otherwise use default
-        let modelPath: String
-        if !storedModelPath.isEmpty && FileManager.default.fileExists(atPath: storedModelPath) {
-            modelPath = storedModelPath
-        } else {
-            modelPath = LocalWhisperService.defaultModelPath()
-        }
-        
-        localWhisperService.configure(binaryPath: binaryPath, modelPath: modelPath)
+        let storedModelID = UserDefaults.standard.string(forKey: LocalWhisperService.modelSelectionKey) ?? ""
+        let modelID = storedModelID.isEmpty
+            ? LocalWhisperService.defaultModelID()
+            : LocalWhisperService.normalizedModelID(from: storedModelID)
+        localWhisperService.configure(modelID: modelID)
+    }
+
+    private func configureParakeetService() {
+        parakeetService.configure(modelChoice: selectedParakeetModelChoice)
     }
 
     // Legacy bookmark handling removed - using temporary exception entitlements instead
@@ -277,22 +308,22 @@ class AppCoordinator: ObservableObject {
 
     private func deltaProcessor(for speaker: TranscriptSpeaker) -> TranscriptionDeltaProcessor {
         switch (selectedSpeechEngine, speaker) {
-        case (.apple, .you):
-            return appleMicDeltaProcessor
-        case (.apple, .others):
-            return appleSystemDeltaProcessor
         case (.whisper, .you):
             return whisperMicDeltaProcessor
         case (.whisper, .others):
             return whisperSystemDeltaProcessor
+        case (.parakeet, .you):
+            return parakeetMicDeltaProcessor
+        case (.parakeet, .others):
+            return parakeetSystemDeltaProcessor
         }
     }
 
     private func resetDeltaProcessors() {
-        appleMicDeltaProcessor.reset()
-        appleSystemDeltaProcessor.reset()
         whisperMicDeltaProcessor.reset()
         whisperSystemDeltaProcessor.reset()
+        parakeetMicDeltaProcessor.reset()
+        parakeetSystemDeltaProcessor.reset()
     }
 
     private func stripSpeakerLabels(from text: String) -> String {
@@ -309,10 +340,10 @@ class AppCoordinator: ObservableObject {
             guard let self = self else { return }
             Task { @MainActor in
                 switch engine {
-                case .apple:
-                    self.audioCaptureService.appendSystemAudioSampleBuffer(sampleBuffer)
                 case .whisper:
                     self.localWhisperService.appendSystemAudioSampleBuffer(sampleBuffer)
+                case .parakeet:
+                    self.parakeetService.appendSystemAudioSampleBuffer(sampleBuffer)
                 }
             }
         }
@@ -348,8 +379,8 @@ class AppCoordinator: ObservableObject {
         
         transcriptBuffer.clear()
         resetDeltaProcessors()
-        audioCaptureService.reset()
         localWhisperService.reset()
+        parakeetService.reset()
         let saveURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents")
             .appendingPathComponent("sniff-transcripts")
@@ -387,12 +418,12 @@ class AppCoordinator: ObservableObject {
     
     func stop() async {
         guard isRunning else { return }
-        
-        cancellables.removeAll()
+
         screenCaptureSubscription?.cancel()
         screenCaptureSubscription = nil
         await screenCaptureService.stopCapture()
-        stopSpeechCapture()
+        await stopSpeechCapture(finalizeSystem: true)
+        cancellables.removeAll()
         transcriptBuffer.stopSession()
         
         // Clean up hotkeys
@@ -606,6 +637,12 @@ class AppCoordinator: ObservableObject {
             
             let answer: String
             if let imageData = imageData {
+                let modelId = selectedModelId.isEmpty
+                    ? LLMModelCatalog.loadOrDefaultModelId(for: selectedProvider)
+                    : selectedModelId
+                guard LLMModelCatalog.supportsVision(provider: selectedProvider, modelId: modelId) else {
+                    throw LLMError.imageInputNotSupportedByModel(modelId)
+                }
                 answer = try await llmService.streamAnswerWithImage(prompt: item.question, imageData: imageData, onChunk: onChunk)
             } else {
                 answer = try await llmService.streamAnswer(item.question, screenContext: item.screenContext, onChunk: onChunk)
@@ -657,6 +694,7 @@ class AppCoordinator: ObservableObject {
     }
     
     func updateAPIKey(_ key: String, for provider: LLMProvider) {
+        guard !provider.usesOAuth else { return }
         do {
             try keychainService.saveAPIKey(key, for: provider)
             if provider == selectedProvider {
@@ -665,6 +703,11 @@ class AppCoordinator: ObservableObject {
         } catch {
             print("Failed to update API key: \(error)")
         }
+    }
+
+    func refreshLLMAfterChatGPTAuth() {
+        objectWillChange.send()
+        rebuildLLMService()
     }
     
     private func updateOverlayVisibility() {

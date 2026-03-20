@@ -24,4 +24,4 @@ build/
 # Swift Package Manager
 .build/
 
-whisper.cpp/
+docs
