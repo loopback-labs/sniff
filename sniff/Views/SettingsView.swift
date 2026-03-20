@@ -12,21 +12,32 @@ import AppKit
 struct SettingsView: View {
     @EnvironmentObject var coordinator: AppCoordinator
     @State private var apiKey: String = ""
-    @State private var isEditingAPIKey = false
-    @State private var hasStoredAPIKey = false
-    @State private var isViewingAPIKey = false
+    @State private var apiKeyUI = APIKeyUIState()
     @State private var selectedDeviceID: AudioDeviceID = 0
     @State private var showingAlert = false
     @State private var alertMessage = ""
-    @State private var whisperBinaryPath: String = ""
-    @State private var whisperModelPath: String = ""
+    @State private var whisperModelID: String = LocalWhisperService.defaultModelID()
     @State private var downloadedModels: [String] = []
     @State private var downloadingModelName: String?
     @State private var modelSizes: [String: String] = [:]
+    /// Bumps to refresh ChatGPT auth UI when session changes.
+    @State private var chatGPTAuthUIVersion = 0
     private let keychainService = KeychainService()
     
     private var audioDeviceService: AudioDeviceService { coordinator.audioDeviceService }
-    
+
+    private func showAlert(_ message: String) {
+        alertMessage = message
+        showingAlert = true
+    }
+
+    private func whisperModelDisplayName(name: String, sizeText: String?) -> String {
+        if let sizeText {
+            return "\(name) (\(sizeText))"
+        }
+        return name
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
@@ -35,115 +46,121 @@ struct SettingsView: View {
                     .bold()
                 
                 VStack(alignment: .leading, spacing: 16) {
-                    // MARK: - LLM Provider
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("LLM Provider")
-                            .font(.headline)
-                        
+                    SettingsFormSection(title: "LLM Provider") {
                         Picker("Provider", selection: $coordinator.selectedProvider) {
                             ForEach(LLMProvider.allCases) { provider in
                                 Text(provider.displayName).tag(provider)
                             }
                         }
-                        .pickerStyle(.segmented)
+                        .pickerStyle(.menu)
                         .onChange(of: coordinator.selectedProvider) { _, _ in
                             loadAPIKey()
                         }
                     }
-                    
-                    // MARK: - API Key
+
+                    SettingsFormSection(
+                        title: "Model",
+                        caption: "Screen questions require a vision-capable model for this provider."
+                    ) {
+                        Picker("Model", selection: $coordinator.selectedModelId) {
+                            ForEach(LLMModelCatalog.models(for: coordinator.selectedProvider)) { option in
+                                Text(option.displayName).tag(option.id)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("\(coordinator.selectedProvider.displayName) API Key")
-                            .font(.headline)
-
-                        if hasStoredAPIKey && !isEditingAPIKey {
-                            Group {
-                                if isViewingAPIKey {
-                                    Text(apiKey)
-                                        .font(.system(.body, design: .monospaced))
-                                        .textSelection(.enabled)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(8)
-                                        .background(Color(nsColor: .textBackgroundColor))
-                                        .cornerRadius(6)
-                                } else {
-                                    Text("••••••••••••••••")
-                                        .font(.system(.body, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(8)
-                                }
-                            }
-
-                            HStack {
-                                Button(isViewingAPIKey ? "Hide" : "View") { toggleViewMode() }
-                                    .buttonStyle(.bordered)
-
-                                Button("Edit") { enterEditMode() }
-                                    .buttonStyle(.bordered)
-
-                                Button("Clear") { clearAPIKey() }
-                                    .buttonStyle(.bordered)
-                            }
+                        if coordinator.selectedProvider.usesOAuth {
+                            chatGPTAuthSection
+                                .id(chatGPTAuthUIVersion)
                         } else {
-                            SecureField("Enter API Key", text: $apiKey)
-                                .textFieldStyle(.roundedBorder)
+                            Text("\(coordinator.selectedProvider.displayName) API Key")
+                                .font(.headline)
 
-                            HStack {
-                                Button("Save") { saveAPIKey() }
-                                    .buttonStyle(.borderedProminent)
+                            if apiKeyUI.hasStoredKey && !apiKeyUI.isEditing {
+                                Group {
+                                    if apiKeyUI.isViewingSecret {
+                                        Text(apiKey)
+                                            .font(.system(.body, design: .monospaced))
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(8)
+                                            .background(Color(nsColor: .textBackgroundColor))
+                                            .cornerRadius(6)
+                                    } else {
+                                        Text("••••••••••••••••")
+                                            .font(.system(.body, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(8)
+                                    }
+                                }
 
-                                if hasStoredAPIKey {
-                                    Button("Cancel") { cancelEdit() }
+                                HStack {
+                                    Button(apiKeyUI.isViewingSecret ? "Hide" : "View") { toggleViewMode() }
+                                        .buttonStyle(.bordered)
+
+                                    Button("Edit") { enterEditMode() }
                                         .buttonStyle(.bordered)
 
                                     Button("Clear") { clearAPIKey() }
                                         .buttonStyle(.bordered)
                                 }
+                            } else {
+                                SecureField("Enter API Key", text: $apiKey)
+                                    .textFieldStyle(.roundedBorder)
+
+                                HStack {
+                                    Button("Save") { saveAPIKey() }
+                                        .buttonStyle(.borderedProminent)
+
+                                    if apiKeyUI.hasStoredKey {
+                                        Button("Cancel") { cancelEdit() }
+                                            .buttonStyle(.bordered)
+
+                                        Button("Clear") { clearAPIKey() }
+                                            .buttonStyle(.bordered)
+                                    }
+                                }
                             }
                         }
                     }
-                    
+
                     Divider()
-                    
-                    // MARK: - Speech Engine
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Speech Engine")
-                            .font(.headline)
-                        
+
+                    SettingsFormSection(
+                        title: "Speech Engine",
+                        caption: coordinator.selectedSpeechEngine == .whisper
+                            ? "WhisperKit runs on-device for both microphone and system audio, with on-demand model downloads."
+                            : "Parakeet transcribes microphone + system audio (FluidAudio)."
+                    ) {
                         Picker("Speech Engine", selection: $coordinator.selectedSpeechEngine) {
                             ForEach(SpeechEngine.allCases) { engine in
                                 Text(engine.displayName).tag(engine)
                             }
                         }
                         .pickerStyle(.segmented)
+                    }
 
-                        Text("Both engines transcribe microphone + system audio by default.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        
-                        if coordinator.selectedSpeechEngine == .whisper {
+                    Group {
+                        switch coordinator.selectedSpeechEngine {
+                        case .whisper:
                             whisperSettingsSection
+                        case .parakeet:
+                            parakeetSettingsSection
                         }
                     }
-                    
+
                     Divider()
-                    
-                    // MARK: - Display
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Display")
-                            .font(.headline)
-                        
+
+                    SettingsFormSection(title: "Display") {
                         Toggle("Include Overlay in Screenshots", isOn: $coordinator.showOverlay)
                     }
-                    
+
                     Divider()
-                    
-                    // MARK: - Audio Input
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Audio Input")
-                            .font(.headline)
-                        
+
+                    SettingsFormSection(title: "Audio Input") {
                         Picker("Input Device", selection: $selectedDeviceID) {
                             Text("Select Device").tag(AudioDeviceID(0))
                             ForEach(audioDeviceService.inputDevices) { device in
@@ -153,7 +170,7 @@ struct SettingsView: View {
                         .onChange(of: selectedDeviceID) { _, newValue in
                             setInputDevice(newValue)
                         }
-                        
+
                         if let currentDevice = audioDeviceService.getDefaultInputDevice() {
                             Text("Current: \(currentDevice.name)")
                                 .font(.caption)
@@ -184,28 +201,6 @@ struct SettingsView: View {
     @ViewBuilder
     private var whisperSettingsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Whisper Binary")
-                .font(.subheadline)
-            
-            HStack {
-                TextField("Path to whisper-stream", text: $whisperBinaryPath)
-                    .textFieldStyle(.roundedBorder)
-                
-                Button("Browse") { chooseWhisperBinary() }
-                    .buttonStyle(.bordered)
-            }
-            
-            if !whisperBinaryPath.isEmpty {
-                let isValid = LocalWhisperService.validateBinaryPath(whisperBinaryPath)
-                HStack {
-                    Image(systemName: isValid ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundColor(isValid ? .green : .red)
-                    Text(isValid ? "Binary found" : "Binary not found")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            
             Text("Whisper Model")
                 .font(.subheadline)
                 .padding(.top, 4)
@@ -215,15 +210,33 @@ struct SettingsView: View {
             }
             
             HStack {
-                Button("Test Whisper Setup") { testWhisperSetup() }
-                    .buttonStyle(.borderedProminent)
-                
-                Button("Save Paths") { saveWhisperPaths() }
+                Button("Save Model") { saveWhisperPaths() }
                     .buttonStyle(.bordered)
             }
             .padding(.top, 4)
+
+            Text("Models are downloaded on demand to app-scoped storage.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Parakeet Settings Section
+
+    @ViewBuilder
+    private var parakeetSettingsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Parakeet Model")
+                .font(.subheadline)
             
-            Text("Install via: brew install whisper-cpp")
+            Picker("Parakeet Model", selection: $coordinator.selectedParakeetModelChoice) {
+                ForEach(ParakeetModelChoice.allCases) { choice in
+                    Text(choice.displayName).tag(choice)
+                }
+            }
+            .pickerStyle(.segmented)
+            
+            Text("Models run locally via FluidAudio.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -231,23 +244,22 @@ struct SettingsView: View {
     
     @ViewBuilder
     private func modelRow(for name: String) -> some View {
-        let filename = "ggml-\(name).bin"
-        let isDownloaded = downloadedModels.contains(filename)
-        let isSelected = whisperModelPath.hasSuffix(filename)
+        let isDownloaded = downloadedModels.contains(name)
+        let isSelected = whisperModelID == name
         
         HStack {
             let sizeText = isDownloaded
-                ? modelSizes[filename]
+                ? modelSizes[name]
                 : LocalWhisperService.estimatedSizeString(for: name).map { "~\($0)" }
-            
-            Text(sizeText == nil ? name : "\(name) (\(sizeText!))")
+
+            Text(whisperModelDisplayName(name: name, sizeText: sizeText))
                 .font(.caption)
             
             Spacer()
             
             if isDownloaded {
                 Button(isSelected ? "Using" : "Use") {
-                    whisperModelPath = LocalWhisperService.modelURL(for: name).path
+                    whisperModelID = name
                     saveWhisperPaths()
                 }
                 .buttonStyle(.bordered)
@@ -262,142 +274,138 @@ struct SettingsView: View {
         }
     }
     
+    // MARK: - ChatGPT OAuth
+
+    @ViewBuilder
+    private var chatGPTAuthSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("ChatGPT account")
+                .font(.headline)
+            if coordinator.chatGPTAuthManager.isSignedIn {
+                if let hint = coordinator.chatGPTAuthManager.accountHint, !hint.isEmpty {
+                    Text("Session active (\(hint))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Signed in")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Button("Sign out") {
+                    coordinator.chatGPTAuthManager.signOut()
+                    coordinator.refreshLLMAfterChatGPTAuth()
+                    chatGPTAuthUIVersion += 1
+                    showAlert("Signed out")
+                }
+                .buttonStyle(.bordered)
+            } else {
+                Text("Sign in with your ChatGPT account (OAuth).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Sign in with ChatGPT") {
+                    Task {
+                        do {
+                            try await coordinator.chatGPTAuthManager.signInWithBrowser()
+                            await MainActor.run {
+                                coordinator.refreshLLMAfterChatGPTAuth()
+                                chatGPTAuthUIVersion += 1
+                                showAlert("Signed in successfully")
+                            }
+                        } catch {
+                            await MainActor.run {
+                                showAlert(error.localizedDescription)
+                            }
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
     // MARK: - API Key Management
     
     private func loadAPIKey() {
+        guard !coordinator.selectedProvider.usesOAuth else {
+            apiKey = ""
+            apiKeyUI = APIKeyUIState()
+            return
+        }
         let stored = keychainService.getAPIKey(for: coordinator.selectedProvider)
         apiKey = stored ?? ""
-        hasStoredAPIKey = stored != nil && !stored!.isEmpty
-        isEditingAPIKey = false
-        isViewingAPIKey = false
+        let has = stored.map { !$0.isEmpty } ?? false
+        apiKeyUI = APIKeyUIState(hasStoredKey: has, isEditing: false, isViewingSecret: false)
     }
 
     private func enterEditMode() {
         loadAPIKey()
-        isEditingAPIKey = true
-        isViewingAPIKey = false
+        apiKeyUI.isEditing = true
+        apiKeyUI.isViewingSecret = false
     }
 
     private func cancelEdit() {
         loadAPIKey()
-        isEditingAPIKey = false
     }
 
     private func toggleViewMode() {
-        if isViewingAPIKey {
-            isViewingAPIKey = false
+        if apiKeyUI.isViewingSecret {
+            apiKeyUI.isViewingSecret = false
         } else {
             loadAPIKey()
-            isViewingAPIKey = true
+            apiKeyUI.isViewingSecret = true
         }
     }
 
     private func saveAPIKey() {
         guard !apiKey.isEmpty else {
-            alertMessage = "API key cannot be empty"
-            showingAlert = true
+            showAlert("API key cannot be empty")
             return
         }
 
         do {
             try keychainService.saveAPIKey(apiKey, for: coordinator.selectedProvider)
             coordinator.updateAPIKey(apiKey, for: coordinator.selectedProvider)
-            hasStoredAPIKey = true
-            isEditingAPIKey = false
-            alertMessage = "API key saved successfully"
-            showingAlert = true
+            apiKeyUI.hasStoredKey = true
+            apiKeyUI.isEditing = false
+            showAlert("API key saved successfully")
         } catch {
-            alertMessage = "Failed to save API key: \(error.localizedDescription)"
-            showingAlert = true
+            showAlert("Failed to save API key: \(error.localizedDescription)")
         }
     }
 
     private func clearAPIKey() {
+        guard !coordinator.selectedProvider.usesOAuth else { return }
         do {
             try keychainService.deleteAPIKey(for: coordinator.selectedProvider)
             apiKey = ""
-            hasStoredAPIKey = false
-            isEditingAPIKey = false
-            isViewingAPIKey = false
+            apiKeyUI = APIKeyUIState()
             coordinator.rebuildLLMService()
-            alertMessage = "API key cleared"
-            showingAlert = true
+            showAlert("API key cleared")
         } catch {
-            alertMessage = "Failed to clear API key: \(error.localizedDescription)"
-            showingAlert = true
+            showAlert("Failed to clear API key: \(error.localizedDescription)")
         }
     }
     
-    // MARK: - Whisper Path Management
+    // MARK: - Whisper Model Management
     
     private func loadWhisperPaths() {
-        // Load stored paths or auto-detect
-        let storedBinaryPath = UserDefaults.standard.string(forKey: "whisperBinaryPath") ?? ""
-        let storedModelPath = UserDefaults.standard.string(forKey: "whisperModelPath") ?? ""
-        
-        // Use stored path if valid, otherwise auto-detect
-        if !storedBinaryPath.isEmpty && LocalWhisperService.validateBinaryPath(storedBinaryPath) {
-            whisperBinaryPath = storedBinaryPath
-        } else if let detected = LocalWhisperService.detectBinaryPath() {
-            whisperBinaryPath = detected
-        }
-        
-        // Use stored model path if exists, otherwise use default
-        if !storedModelPath.isEmpty && FileManager.default.fileExists(atPath: storedModelPath) {
-            whisperModelPath = storedModelPath
+        let storedModelID = UserDefaults.standard.string(forKey: UserDefaultsKeys.whisperModelId) ?? ""
+        if storedModelID.isEmpty {
+            whisperModelID = LocalWhisperService.defaultModelID()
         } else {
-            whisperModelPath = LocalWhisperService.defaultModelPath()
+            whisperModelID = LocalWhisperService.normalizedModelID(from: storedModelID)
         }
     }
     
     private func saveWhisperPaths() {
-        guard !whisperBinaryPath.isEmpty else {
-            alertMessage = "Whisper binary path cannot be empty"
-            showingAlert = true
+        let normalized = LocalWhisperService.normalizedModelID(from: whisperModelID)
+        guard LocalWhisperService.availableModelNames.contains(normalized) else {
+            showAlert("Invalid Whisper model selection")
             return
         }
-        
-        UserDefaults.standard.set(whisperBinaryPath, forKey: "whisperBinaryPath")
-        UserDefaults.standard.set(whisperModelPath, forKey: "whisperModelPath")
-        alertMessage = "Whisper paths saved"
-        showingAlert = true
-    }
-    
-    private func chooseWhisperBinary() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Select whisper-stream binary"
-        
-        // Start in a sensible directory
-        if !whisperBinaryPath.isEmpty {
-            let url = URL(fileURLWithPath: (whisperBinaryPath as NSString).expandingTildeInPath)
-            panel.directoryURL = url.deletingLastPathComponent()
-        } else {
-            panel.directoryURL = URL(fileURLWithPath: "/opt/homebrew/bin")
-        }
-        
-        if panel.runModal() == .OK, let url = panel.url {
-            whisperBinaryPath = url.path
-        }
-    }
-    
-    private func testWhisperSetup() {
-        guard !whisperBinaryPath.isEmpty else {
-            alertMessage = "Please set the whisper binary path first"
-            showingAlert = true
-            return
-        }
-        
-        do {
-            try LocalWhisperService.testBinary(at: whisperBinaryPath)
-            alertMessage = "Whisper binary OK!"
-            showingAlert = true
-        } catch {
-            alertMessage = error.localizedDescription
-            showingAlert = true
-        }
+        UserDefaults.standard.set(normalized, forKey: UserDefaultsKeys.whisperModelId)
+        whisperModelID = normalized
+        showAlert("Whisper model saved")
     }
     
     // MARK: - Model Management
@@ -406,7 +414,7 @@ struct SettingsView: View {
         downloadedModels = LocalWhisperService.listDownloadedModels()
         var sizes: [String: String] = [:]
         for model in downloadedModels {
-            if let size = LocalWhisperService.sizeStringForModelFile(model) {
+            if let size = LocalWhisperService.sizeStringForDownloadedModel(model) {
                 sizes[model] = size
             }
         }
@@ -414,42 +422,23 @@ struct SettingsView: View {
     }
     
     private func downloadModel(named name: String) {
-        guard let downloadURL = LocalWhisperService.downloadURL(for: name) else {
-            alertMessage = "Invalid model name"
-            showingAlert = true
-            return
-        }
-        
         downloadingModelName = name
-        let destination = LocalWhisperService.modelURL(for: name)
         
         Task {
             do {
-                try FileManager.default.createDirectory(
-                    at: destination.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                
-                let (tempURL, _) = try await URLSession.shared.download(from: downloadURL)
-                
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try? FileManager.default.removeItem(at: destination)
-                }
-                try FileManager.default.moveItem(at: tempURL, to: destination)
+                _ = try await LocalWhisperService.downloadModel(named: name)
                 
                 await MainActor.run {
                     downloadingModelName = nil
                     listDownloadedModels()
-                    whisperModelPath = destination.path
+                    whisperModelID = name
                     saveWhisperPaths()
-                    alertMessage = "Downloaded \(name) model"
-                    showingAlert = true
+                    showAlert("Downloaded \(name) model")
                 }
             } catch {
                 await MainActor.run {
                     downloadingModelName = nil
-                    alertMessage = "Failed to download model: \(error.localizedDescription)"
-                    showingAlert = true
+                    showAlert("Failed to download model: \(error.localizedDescription)")
                 }
             }
         }
@@ -458,7 +447,7 @@ struct SettingsView: View {
     // MARK: - Audio Device Management
     
     private func loadSelectedDevice() {
-        if let savedUID = UserDefaults.standard.string(forKey: "selectedAudioInputDeviceUID"),
+        if let savedUID = UserDefaults.standard.string(forKey: UserDefaultsKeys.selectedAudioInputDeviceUID),
            let device = audioDeviceService.inputDevices.first(where: { $0.uid == savedUID }) {
             selectedDeviceID = device.id
         } else if let defaultID = audioDeviceService.defaultInputDeviceID {
@@ -471,13 +460,39 @@ struct SettingsView: View {
         do {
             try audioDeviceService.setDefaultInputDevice(deviceID)
             if let device = audioDeviceService.inputDevices.first(where: { $0.id == deviceID }) {
-                UserDefaults.standard.set(device.uid, forKey: "selectedAudioInputDeviceUID")
+                UserDefaults.standard.set(device.uid, forKey: UserDefaultsKeys.selectedAudioInputDeviceUID)
             }
         } catch {
-            alertMessage = error.localizedDescription
-            showingAlert = true
+            showAlert(error.localizedDescription)
         }
     }
+}
+
+// MARK: - Subviews / state
+
+private struct SettingsFormSection<Content: View>: View {
+    let title: String
+    var caption: String?
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+            content()
+            if let caption {
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct APIKeyUIState {
+    var hasStoredKey = false
+    var isEditing = false
+    var isViewingSecret = false
 }
 
 #Preview("Settings") {

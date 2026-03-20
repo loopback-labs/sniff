@@ -418,7 +418,7 @@ struct sniffTests {
     }
     
     @Test func base64DataURLFormatIsCorrect() {
-        // Test OpenAI/Perplexity format
+        // Test OpenAI format
         let testData = "fake jpeg".data(using: .utf8)!
         let base64 = testData.base64EncodedString()
         let dataURL = "data:image/jpeg;base64,\(base64)"
@@ -594,8 +594,12 @@ struct sniffTests {
 
     @Test func llmProviderMetadata() {
         #expect(LLMProvider.openai.displayName == "OpenAI")
+        #expect(LLMProvider.claude.displayName == "Claude")
         #expect(LLMProvider.gemini.displayName == "Gemini")
-        #expect(LLMProvider.perplexity.keychainKey == "perplexity_api_key")
+        #expect(LLMProvider.chatgpt.displayName == "ChatGPT")
+        #expect(LLMProvider.openai.keychainKey == "openai_api_key")
+        #expect(LLMProvider.chatgpt.usesOAuth == true)
+        #expect(LLMProvider.openai.usesOAuth == false)
         #expect(LLMProvider.allCases.count == 4)
     }
 
@@ -611,16 +615,57 @@ struct sniffTests {
     }
 
     @Test func claudeServiceParsesStreamLine() {
-        let service = ClaudeService(apiKey: "test")
+        let service = ClaudeService(apiKey: "test", model: "claude-sonnet-4-6")
         let line = "data: {\"delta\":{\"text\":\"Hello\"}}"
         #expect(service.parseStreamLine(line) == "Hello")
         #expect(service.isStreamDone("[DONE]") == false)
     }
 
     @Test func geminiServiceParsesStreamLineAndBuildURL() {
-        let service = GeminiService(apiKey: "abc123")
+        let service = GeminiService(apiKey: "abc123", model: "gemini-2.5-flash")
         let line = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi\"}]}}]}"
         #expect(service.parseStreamLine(line) == "Hi")
         #expect(service.buildURL()?.absoluteString.contains("key=abc123") == true)
+        #expect(service.buildURL()?.absoluteString.contains("gemini-2.5-flash") == true)
+    }
+
+    // MARK: - Transcription / stream helpers
+
+    @Test func transcriptionTextUtilsRootMeanSquare() {
+        let rms = TranscriptionTextUtils.rootMeanSquare(of: [1.0, -1.0])
+        #expect(abs(Double(rms) - 1.0) < 0.001)
+        #expect(TranscriptionTextUtils.rootMeanSquare(of: []) == 0)
+    }
+
+    @Test func transcriptionTextUtilsBoundarySmoothingTrimsOverlap() {
+        // `addition` must start with the last up-to-48 chars of `existing` for overlap trim.
+        let existing = "hello world"
+        let addition = "hello world continued"
+        let merged = TranscriptionTextUtils.appendWithBoundarySmoothing(existing, addition)
+        #expect(merged == "hello world continued")
+        #expect(!merged.contains("hello world hello world"))
+    }
+
+    @Test func transcriptionTextUtilsNormalizeSystemTextAddsPeriod() {
+        let out = TranscriptionTextUtils.normalizeSystemText("no period")
+        #expect(out.hasSuffix("."))
+    }
+
+    @Test func sseDataPayloadStripsPrefix() {
+        #expect(LLMStreamHelpers.sseDataPayload(from: "data: {\"x\":1}") == "{\"x\":1}")
+        #expect(LLMStreamHelpers.sseDataPayload(from: "not data") == nil)
+    }
+
+    @Test func sseDataPayloadPreservesEmbeddedDataSubstring() {
+        let line = #"data: {"hint":"data:embedded"}"#
+        #expect(LLMStreamHelpers.sseDataPayload(from: line) == #"{"hint":"data:embedded"}"#)
+    }
+
+    @Test func llmModelCatalogChatgptIsOpenAISubset() {
+        let openaiIds = Set(LLMModelCatalog.models(for: .openai).map(\.id))
+        let chatgptIds = Set(LLMModelCatalog.models(for: .chatgpt).map(\.id))
+        #expect(chatgptIds.isSubset(of: openaiIds))
+        #expect(chatgptIds.contains("gpt-4o"))
+        #expect(chatgptIds.contains("gpt-4o-mini"))
     }
 }

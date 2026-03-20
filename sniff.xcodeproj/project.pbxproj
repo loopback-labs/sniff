@@ -8,7 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		8A8A91B02F1E3AAC00BA66C5 /* HotKey in Frameworks */ = {isa = PBXBuildFile; productRef = 8A8A91AF2F1E3AAC00BA66C5 /* HotKey */; };
+		8A8A91C32F3A2B2B00C0FFEF /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 8A8A91C22F3A2B2B00C0FFEF /* FluidAudio */; };
 		8AB378232F215946001B6B02 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = 8A8E40E92F2150A6000613D6 /* Textual */; };
+		8AF10C5C302A4A9D00B11A10 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 8AF10C5B302A4A9D00B11A10 /* WhisperKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -59,6 +61,8 @@
 			files = (
 				8AB378232F215946001B6B02 /* Textual in Frameworks */,
 				8A8A91B02F1E3AAC00BA66C5 /* HotKey in Frameworks */,
+				8A8A91C32F3A2B2B00C0FFEF /* FluidAudio in Frameworks */,
+				8AF10C5C302A4A9D00B11A10 /* WhisperKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -121,6 +125,8 @@
 			packageProductDependencies = (
 				8A8A91AF2F1E3AAC00BA66C5 /* HotKey */,
 				8A8E40E92F2150A6000613D6 /* Textual */,
+				8A8A91C22F3A2B2B00C0FFEF /* FluidAudio */,
+				8AF10C5B302A4A9D00B11A10 /* WhisperKit */,
 			);
 			productName = sniff;
 			productReference = 8A8A90D42F18E5DF00BA66C5 /* syncsd.app */;
@@ -207,6 +213,8 @@
 			packageReferences = (
 				8A8A91AE2F1E3AAC00BA66C5 /* XCRemoteSwiftPackageReference "HotKey" */,
 				8A8E40E82F2150A6000613D6 /* XCRemoteSwiftPackageReference "textual" */,
+				8A8A91C12F3A2B2B00C0FFEE /* XCRemoteSwiftPackageReference "FluidAudio" */,
+				8AF10C5A302A4A9D00B11A10 /* XCRemoteSwiftPackageReference "WhisperKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8A8A90D52F18E5DF00BA66C5 /* Products */;
@@ -610,12 +618,28 @@
 				version = 0.2.1;
 			};
 		};
+		8A8A91C12F3A2B2B00C0FFEE /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.12.4;
+			};
+		};
 		8A8E40E82F2150A6000613D6 /* XCRemoteSwiftPackageReference "textual" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/gonzalezreal/textual";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.2.1;
+				minimumVersion = 0.3.1;
+			};
+		};
+		8AF10C5A302A4A9D00B11A10 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/WhisperKit.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.17.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -626,10 +650,20 @@
 			package = 8A8A91AE2F1E3AAC00BA66C5 /* XCRemoteSwiftPackageReference "HotKey" */;
 			productName = HotKey;
 		};
+		8A8A91C22F3A2B2B00C0FFEF /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8A8A91C12F3A2B2B00C0FFEE /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
+		};
 		8A8E40E92F2150A6000613D6 /* Textual */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 8A8E40E82F2150A6000613D6 /* XCRemoteSwiftPackageReference "textual" */;
 			productName = Textual;
+		};
+		8AF10C5B302A4A9D00B11A10 /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8AF10C5A302A4A9D00B11A10 /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			productName = WhisperKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -6,8 +6,13 @@
 import Foundation
 
 class GeminiService: BaseLLMService {
-    init(apiKey: String) {
-        super.init(apiKey: apiKey, baseURL: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent")
+    private let model: String
+
+    init(apiKey: String, model: String) {
+        self.model = model
+        let url =
+          "https://generativelanguage.googleapis.com/v1beta/models/\(model):streamGenerateContent"
+        super.init(apiKey: apiKey, baseURL: url)
     }
 
     override func buildURL() -> URL? {
@@ -18,7 +23,11 @@ class GeminiService: BaseLLMService {
         [
             "system_instruction": ["parts": [["text": systemPrompt]]],
             "contents": [["role": "user", "parts": [["text": question]]]],
-            "generationConfig": ["maxOutputTokens": 4096, "temperature": 0.2]
+            "generationConfig": [
+                "maxOutputTokens": 4096,
+                "temperature": 0.2,
+                "thinkingConfig": ["thinkingLevel": "MEDIUM"]
+            ]
         ]
     }
 
@@ -34,7 +43,11 @@ class GeminiService: BaseLLMService {
                     ]
                 ]
             ],
-            "generationConfig": ["maxOutputTokens": 4096, "temperature": 0.2]
+            "generationConfig": [
+                "maxOutputTokens": 4096,
+                "temperature": 0.2,
+                "thinkingConfig": ["thinkingLevel": "MEDIUM"]
+            ]
         ]
     }
 

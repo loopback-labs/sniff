@@ -8,17 +8,17 @@
 import Foundation
 
 enum SpeechEngine: String, CaseIterable, Identifiable {
-    case apple
     case whisper
+    case parakeet
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .apple:
-            return "Apple Speech"
         case .whisper:
-            return "Whisper (Local)"
+            return "Whisper"
+        case .parakeet:
+            return "Parakeet"
         }
     }
 }
