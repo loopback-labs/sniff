@@ -45,9 +45,6 @@ struct MenuBarView: View {
                 }
             }
             
-            Toggle("Automatic Mode (⌘⇧M)", isOn: $coordinator.automaticMode)
-                .disabled(!coordinator.isRunning)
-            
             Divider()
             
             Button("Screen Question (⌘⇧Q)") {

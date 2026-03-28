@@ -9,21 +9,17 @@ import Foundation
 import Combine
 import ScreenCaptureKit
 import AppKit
-import CoreVideo
 import CoreMedia
 
 class ScreenCaptureService: NSObject, ObservableObject {
     private var contentFilter: SCContentFilter?
     private var stream: SCStream?
-    private let captureInterval: TimeInterval = 8.0
-    private var lastCaptureTime: Date = Date()
-    private let screenOutputQueue = DispatchQueue(label: "com.sniff.screen.output", qos: .userInitiated)
+    // .screen output must be registered or SCK logs dropped frames; samples unused (screenshots via SCScreenshotManager).
+    private let screenOutputQueue = DispatchQueue(label: "com.sniff.screen.output", qos: .utility)
     private let audioOutputQueue = DispatchQueue(label: "com.sniff.audio.output", qos: .userInitiated)
-    private let ciContext = CIContext()
     nonisolated(unsafe) private var audioSampleHandler: ((CMSampleBuffer) -> Void)?
     nonisolated(unsafe) private var isSystemAudioEnabled = false
 
-    @Published var capturedImageData: Data?
     @Published var isCapturing: Bool = false
 
     func startCapture(
@@ -63,7 +59,6 @@ class ScreenCaptureService: NSObject, ObservableObject {
 
         self.stream = stream
         self.isCapturing = true
-        self.lastCaptureTime = Date()
     }
 
     func stopCapture() async {
@@ -76,18 +71,18 @@ class ScreenCaptureService: NSObject, ObservableObject {
             self.isCapturing = false
         }
 
-        do {
-            try stream.removeStreamOutput(self, type: .screen)
-        } catch {
-            print("Failed to remove screen stream output: \(error)")
-        }
-
         if isSystemAudioEnabled {
             do {
                 try stream.removeStreamOutput(self, type: .audio)
             } catch {
                 print("Failed to remove audio stream output: \(error)")
             }
+        }
+
+        do {
+            try stream.removeStreamOutput(self, type: .screen)
+        } catch {
+            print("Failed to remove screen stream output: \(error)")
         }
 
         do {
@@ -113,20 +108,6 @@ class ScreenCaptureService: NSObject, ObservableObject {
         return jpegData
     }
 
-    private func captureImage(from imageBuffer: CVImageBuffer) {
-        let ciImage = CIImage(cvPixelBuffer: imageBuffer)
-        guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent),
-              let jpegData = jpegData(from: cgImage) else {
-            print("Failed to convert frame to JPEG")
-            return
-        }
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self, self.isCapturing else { return }
-            self.capturedImageData = jpegData
-        }
-    }
-
     func captureCurrentFrame() async -> Data? {
         guard isCapturing, let contentFilter = contentFilter else { return nil }
 
@@ -145,24 +126,13 @@ class ScreenCaptureService: NSObject, ObservableObject {
             return nil
         }
     }
-
-    nonisolated private func handleScreenSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
-        guard isCapturing else { return }
-        let now = Date()
-        let timeSinceLastCapture = now.timeIntervalSince(lastCaptureTime)
-        guard timeSinceLastCapture >= captureInterval else { return }
-        lastCaptureTime = now
-
-        guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        captureImage(from: imageBuffer)
-    }
 }
 
 extension ScreenCaptureService: SCStreamOutput {
     nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         switch type {
         case .screen:
-            handleScreenSampleBuffer(sampleBuffer)
+            break
         case .audio:
             guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
             audioSampleHandler?(sampleBuffer)

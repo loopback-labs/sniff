@@ -31,7 +31,6 @@ class AppCoordinator: ObservableObject {
     private var hotKeys: [HotKey] = []
     private var toggleHotKey: HotKey?
     private var cancellables = Set<AnyCancellable>()
-    private var screenCaptureSubscription: AnyCancellable?
     private let audioQuestionPipeline: AudioQuestionPipeline
     private let whisperMicDeltaProcessor = TranscriptionDeltaProcessor()
     private let whisperSystemDeltaProcessor = TranscriptionDeltaProcessor()
@@ -39,17 +38,6 @@ class AppCoordinator: ObservableObject {
     private let parakeetSystemDeltaProcessor = TranscriptionDeltaProcessor()
     
     @Published var isRunning = false
-    @Published var automaticMode = false {
-        didSet {
-            guard isRunning else { return }
-            if automaticMode {
-                setupScreenCaptureSubscription()
-            } else {
-                screenCaptureSubscription?.cancel()
-                screenCaptureSubscription = nil
-            }
-        }
-    }
     @Published var selectedProvider: LLMProvider {
         didSet {
             UserDefaults.standard.set(selectedProvider.rawValue, forKey: UserDefaultsKeys.selectedLLMProvider)
@@ -282,12 +270,6 @@ class AppCoordinator: ObservableObject {
                     print("🔍 Detected audio question: \(latestQuestion.prefix(50))...")
                 }
                 self.transcriptBuffer.updateLatestQuestion(result.latestQuestion)
-
-                if self.automaticMode {
-                    for question in result.questions {
-                        self.processQuestion(question, source: .audio, screenContext: nil)
-                    }
-                }
             }
             .store(in: &cancellables)
     }
@@ -319,15 +301,6 @@ class AppCoordinator: ObservableObject {
                 route(sampleBuffer)
             }
         }
-    }
-    
-    private func setupScreenCaptureSubscription() {
-        screenCaptureSubscription?.cancel()
-        screenCaptureSubscription = screenCaptureService.$capturedImageData
-            .compactMap { $0 }
-            .sink { [weak self] imageData in
-                self?.processScreenImage(imageData)
-            }
     }
     
     func toggle() {
@@ -370,10 +343,6 @@ class AppCoordinator: ObservableObject {
                 print("⚠️ Screen/system audio capture unavailable; continuing with microphone-only transcription: \(error)")
             }
 
-            if automaticMode {
-                setupScreenCaptureSubscription()
-            }
-
             try await startSpeechCapture(using: selectedSpeechEngine)
             createQAOverlayWindow()
             createTranscriptOverlayWindow()
@@ -382,16 +351,12 @@ class AppCoordinator: ObservableObject {
         } catch {
             print("Failed to start services: \(error)")
             cancellables.removeAll()
-            screenCaptureSubscription?.cancel()
-            screenCaptureSubscription = nil
         }
     }
     
     func stop() async {
         guard isRunning else { return }
 
-        screenCaptureSubscription?.cancel()
-        screenCaptureSubscription = nil
         await screenCaptureService.stopCapture()
         await stopSpeechCapture(finalizeSystem: true)
         cancellables.removeAll()
@@ -459,12 +424,6 @@ class AppCoordinator: ObservableObject {
             self?.triggerAudioQuestion()
         }
         hotKeys.append(audioQuestionHotKey)
-
-        let toggleAutomaticModeHotKey = HotKey(key: .m, modifiers: [.command, .shift])
-        toggleAutomaticModeHotKey.keyDownHandler = { [weak self] in
-            self?.automaticMode.toggle()
-        }
-        hotKeys.append(toggleAutomaticModeHotKey)
 
         let optionLeftKey = HotKey(key: .leftArrow, modifiers: [.option])
         optionLeftKey.keyDownHandler = { [weak self] in

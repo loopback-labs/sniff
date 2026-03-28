@@ -8,7 +8,6 @@
 import Foundation
 
 enum QuestionSource {
-    case audio
     case screen
     case manual
 }

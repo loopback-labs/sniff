@@ -41,7 +41,7 @@ struct sniffTests {
         let manager = QAManager()
         
         let first = manager.addQuestion("What is Sniff?", source: .manual)
-        _ = manager.addQuestion("How does it work?", source: .audio)
+        _ = manager.addQuestion("How does it work?", source: .manual)
         
         #expect(manager.currentIndex == 1)
         #expect(manager.currentItem?.question == "How does it work?")
@@ -355,9 +355,8 @@ struct sniffTests {
     
     // MARK: - Vision/Image-Based Question Tests
     
-    @Test func screenCaptureServiceInitializesWithNilImageData() {
+    @Test func screenCaptureServiceInitializesNotCapturing() {
         let service = ScreenCaptureService()
-        #expect(service.capturedImageData == nil)
         #expect(service.isCapturing == false)
     }
     
@@ -376,18 +375,18 @@ struct sniffTests {
     @Test func qaManagerHandlesMultipleSourceTypes() {
         let manager = QAManager()
         
-        let audioItem = manager.addQuestion("What is this?", source: .audio)
         let screenItem = manager.addQuestion("Solve image problem", source: .screen)
         let manualItem = manager.addQuestion("Manual question", source: .manual)
+        let secondManualItem = manager.addQuestion("Another manual", source: .manual)
         
         #expect(manager.items.count == 3)
-        #expect(manager.items[0].source == .audio)
-        #expect(manager.items[1].source == .screen)
+        #expect(manager.items[0].source == .screen)
+        #expect(manager.items[1].source == .manual)
         #expect(manager.items[2].source == .manual)
         
-        #expect(audioItem.source == .audio)
         #expect(screenItem.source == .screen)
         #expect(manualItem.source == .manual)
+        #expect(secondManualItem.source == .manual)
     }
     
     @Test func qaItemStoresScreenContext() {
@@ -397,8 +396,8 @@ struct sniffTests {
         let imageItem = manager.addQuestion("Solve this", source: .screen, screenContext: nil)
         #expect(imageItem.screenContext == nil)
         
-        // Audio item with text context
-        let textItem = manager.addQuestion("What is X?", source: .audio, screenContext: "Some context text")
+        // Manual item with text context
+        let textItem = manager.addQuestion("What is X?", source: .manual, screenContext: "Some context text")
         #expect(textItem.screenContext == "Some context text")
     }
     
@@ -430,16 +429,14 @@ struct sniffTests {
     // MARK: - QuestionSource Enum Tests
     
     @Test func questionSourceEnumHasExpectedCases() {
-        let sources: [QuestionSource] = [.audio, .screen, .manual]
-        #expect(sources.count == 3)
+        let sources: [QuestionSource] = [.screen, .manual]
+        #expect(sources.count == 2)
     }
     
     @Test func questionSourceUsedCorrectlyInQAItem() {
-        let audioItem = QAItem(question: "Q1", source: .audio)
-        let screenItem = QAItem(question: "Q2", source: .screen)
-        let manualItem = QAItem(question: "Q3", source: .manual)
+        let screenItem = QAItem(question: "Q1", source: .screen)
+        let manualItem = QAItem(question: "Q2", source: .manual)
         
-        #expect(audioItem.source == .audio)
         #expect(screenItem.source == .screen)
         #expect(manualItem.source == .manual)
     }

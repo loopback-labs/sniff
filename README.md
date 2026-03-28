@@ -8,7 +8,7 @@ Open-source macOS menu bar app in the spirit of tools like Cluely: it captures s
 
 ## Features
 
-- **Automatic question detection** from live transcription
+- **Question detection** in live transcription (highlighted in the transcript; use **⌘⇧A** to send to the LLM)
 - **LLM providers:** OpenAI, Claude (Anthropic), Gemini (Google), and **ChatGPT** (session-based sign-in, not a stored API key)
 - **Per-provider model picker**, with a clear path to vision-capable models for screen questions
 - **Speech engines (on-device transcription):**
@@ -92,28 +92,16 @@ Maintainers: in **Actions**, run workflow **Release macOS DMG** with branch **ma
 1. Open from the menu bar  
 2. **Start** capture (or **⌘⇧W**)
 
-### Automatic mode
+### Questions and hotkeys
 
-When automatic mode is on, the app can:
-
-- Watch transcription for questions  
-- Optionally tie in screen-driven flows per your settings  
-- Send detected questions to the selected provider and stream answers into the overlay  
-
-Toggle automatic mode from the menu or with **⌘⇧M**.
-
-### Manual mode
-
-1. Turn off automatic mode if you want full manual control  
-2. **⌘⇧Q** — screen question (uses current screenshot)  
-3. **⌘⇧A** — audio question (uses latest transcribed question context)
+1. **⌘⇧Q** — screen question (uses current screenshot)  
+2. **⌘⇧A** — audio question (uses latest detected question from transcription, or falls back to detecting a question in recent text)
 
 ### Keyboard shortcuts
 
 | Shortcut | Action |
 |----------|--------|
 | ⌘⇧W | Start / stop capture |
-| ⌘⇧M | Toggle automatic mode |
 | ⌘⇧Q | Screen question |
 | ⌘⇧A | Audio question |
 | ⌘⇧R | Quit (stops capture then terminates) |
