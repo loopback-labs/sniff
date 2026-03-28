@@ -135,9 +135,7 @@ sniff/
 ├── Views/                  # SwiftUI: settings, overlays, Q&A display, transcript UI
 ├── AppCoordinator.swift    # Orchestrates capture, hotkeys, providers, overlays
 ├── sniffApp.swift          # App entry, menu bar content
-├── ContentView.swift
-├── TranscriptOverlayContent.swift
-└── Item.swift
+└── TranscriptOverlayContent.swift
 ```
 
 ## Privacy and security

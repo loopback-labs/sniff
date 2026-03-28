@@ -30,8 +30,7 @@ class QuestionDetectionService {
             return isQuestion(sentenceTrimmed) ? sentenceTrimmed : nil
         }
 
-        // Only use fallback if text has no sentence-ending punctuation at all
-        // (indicates incomplete/streaming transcription)
+        // Fallback when streaming text has no sentence-ending punctuation yet.
         let hasPunctuation = containsSentencePunctuation(in: trimmed)
         if questions.isEmpty && !hasPunctuation {
             questions = detectQuestionsWithoutPunctuation(in: trimmed)

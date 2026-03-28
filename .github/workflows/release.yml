@@ -52,10 +52,15 @@ jobs:
           VERSION="${{ inputs.version }}"
           APP_PATH="build/Build/Products/Release/syncsd.app"
           DMG_NAME="Sniff-${VERSION}.dmg"
-          
-          # Create DMG
+          DMG_CONTENT_DIR="dmg-content"
+
+          rm -rf "${DMG_CONTENT_DIR}"
+          mkdir -p "${DMG_CONTENT_DIR}"
+          cp -R "${APP_PATH}" "${DMG_CONTENT_DIR}/"
+          ln -s /Applications "${DMG_CONTENT_DIR}/Applications"
+
           hdiutil create -volname "Sniff" \
-            -srcfolder "${APP_PATH}" \
+            -srcfolder "${DMG_CONTENT_DIR}" \
             -ov -format UDZO \
             "${DMG_NAME}"
           

@@ -102,3 +102,14 @@ struct ChatBubbleView: View {
         }
     }
 }
+
+#Preview("Transcript Overlay") {
+    let buffer = TranscriptBuffer()
+    buffer.append(deltaText: "What is the best way to test a whisper model?", speaker: .you)
+    buffer.append(deltaText: "It should stream quickly and be accurate.", speaker: .others)
+    buffer.updateLatestQuestion("What is the best way to test a whisper model?")
+    buffer.refreshDisplay()
+    return TranscriptOverlayContentView(transcriptBuffer: buffer)
+        .frame(width: 360, height: 220)
+        .padding()
+}

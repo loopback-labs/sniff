@@ -180,8 +180,7 @@ final class TranscriptBuffer: ObservableObject {
     }
 
     private func buildTailText() -> String {
-        // Show live (in-progress) speech immediately in the transcript window,
-        // but only persist sentence-complete chunks to disk.
+        // UI includes pending partial speech; disk keeps completed chunks only.
         var text = joinChunks(tailChunks)
         let pending = pendingText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !pending.isEmpty {

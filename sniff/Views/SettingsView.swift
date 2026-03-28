@@ -20,7 +20,6 @@ struct SettingsView: View {
     @State private var downloadedModels: [String] = []
     @State private var downloadingModelName: String?
     @State private var modelSizes: [String: String] = [:]
-    /// Bumps to refresh ChatGPT auth UI when session changes.
     @State private var chatGPTAuthUIVersion = 0
     private let keychainService = KeychainService()
     

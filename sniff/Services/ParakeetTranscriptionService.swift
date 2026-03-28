@@ -34,29 +34,21 @@ final class ParakeetTranscriptionService: ObservableObject {
 
     private var accumulatedMicText: String = ""
 
-    // VAD expects fixed-size slices (matching `micChunkSamples`). AVAudioEngine taps
-    // typically deliver smaller buffers, so we accumulate until we can feed 4096 samples.
+    // Buffer mic tap output to micChunkSamples-sized slices for VAD.
     private var vadInputBuffer: [Float] = []
 
     private var systemSamples: [Float] = []
 
-    // For "real-time" system audio: FluidAudio/Parakeet is not a true streaming decoder,
-    // so we periodically re-transcribe the growing system buffer while capture is running.
+    // No streaming ASR path; periodically re-transcribe accumulated system audio.
     private var systemRealtimeTranscriptionTask: Task<Void, Never>?
     private var systemRealtimeLastSampleCount: Int = 0
     private let systemRealtimeIntervalSeconds: TimeInterval = 1.0
     private let systemRealtimeMinInitialSamples: Int = 16000 // ~1s @ 16kHz
     private let systemRealtimeMinNewSamples: Int = 8000 // ~0.5s @ 16kHz
-    /// FluidAudio `ASRConstants.maxModelSamples` (~15s @ 16kHz). Re-transcribe a rolling tail so we
-    /// don't run multi-minute `ChunkProcessor` paths inside the realtime loop (blocks follow-up passes).
-    private let systemRealtimeWindowSamples: Int = 240_000
-    /// Inspect only the **end** of the tail: if playback paused, the last ~1s is near silence but the
-    /// rest of the window still contains old speech — ASR would keep re-emitting the same transcript.
-    private let systemRealtimeRecentActivitySamples: Int = 16_000 // ~1s @ 16kHz
-    /// RMS below this (float PCM ~[-1,1]) treats recent audio as silence; skip ASR to avoid repeats.
+    private let systemRealtimeWindowSamples: Int = 240_000 // ~15s @ 16kHz; cap work per realtime pass
+    private let systemRealtimeRecentActivitySamples: Int = 16_000 // ~1s tail for RMS / silence
     private let systemRealtimeSilenceRMSThreshold: Float = 0.0025
 
-    /// Last normalized system realtime string we published; avoids duplicate UI updates when ASR repeats.
     private var lastSystemRealtimePublishedNormalized: String = ""
 
     func reset() {
@@ -76,7 +68,6 @@ final class ParakeetTranscriptionService: ObservableObject {
 
         guard self.asrModelVersion != newVersion else { return }
         self.asrModelVersion = newVersion
-        // Force reload for the selected model version.
         self.asrManager = nil
     }
 
@@ -108,12 +99,10 @@ final class ParakeetTranscriptionService: ObservableObject {
 
         stopMicCapture()
 
-        // Cancel realtime system transcription before we possibly do a final transcription.
         systemRealtimeTranscriptionTask?.cancel()
         await systemRealtimeTranscriptionTask?.value
         systemRealtimeTranscriptionTask = nil
 
-        // End the async VAD stream so the loop can flush/exit deterministically.
         vadContinuation?.finish()
         vadContinuation = nil
 
@@ -131,7 +120,6 @@ final class ParakeetTranscriptionService: ObservableObject {
             await transcribeSystemAudio()
         }
 
-        // Clear buffers no matter what (restart will call `reset()` anyway).
         systemSamples.removeAll()
         if !finalizeSystem {
             accumulatedMicText = ""
@@ -341,9 +329,7 @@ final class ParakeetTranscriptionService: ObservableObject {
 
             guard capturingInternal, !Task.isCancelled else { break }
 
-            // Snapshot on main actor to avoid racing against `appendSystemAudioSampleBuffer`.
             let snapshot: [Float] = await MainActor.run {
-                // If capture is already stopped while we were sleeping, don't waste work.
                 guard capturingInternal else { return [] }
                 return systemSamples
             }
@@ -355,9 +341,7 @@ final class ParakeetTranscriptionService: ObservableObject {
                 continue
             }
 
-            // FluidAudio: raw `[Float]` transcription defaults to `.microphone`; `.system` is intended
-            // for file-style paths and can yield empty text with SCStream buffers. Use `.microphone`.
-            // Use a rolling tail window so each pass stays ~one model window (avoids blocking on huge buffers).
+            // SCStream floats: transcribe with .microphone; cap tail; skip ASR when recent tail is silent.
             do {
                 guard !Task.isCancelled else { return }
                 let tail = snapshot.count > systemRealtimeWindowSamples
@@ -365,8 +349,6 @@ final class ParakeetTranscriptionService: ObservableObject {
                     : snapshot
                 guard tail.count >= 16_000 else { continue }
 
-                // If the *latest* audio is silent, do not re-run ASR: the tail still contains older
-                // speech and Parakeet would keep returning the same lines during a pause.
                 let recentCount = min(systemRealtimeRecentActivitySamples, tail.count)
                 let recentTail = Array(tail.suffix(recentCount))
                 let recentRMS = TranscriptionTextUtils.rootMeanSquare(of: recentTail)
@@ -383,7 +365,6 @@ final class ParakeetTranscriptionService: ObservableObject {
                 let text = TranscriptionTextUtils.normalizeSystemText(asrResult.text)
                 guard !text.isEmpty, !Task.isCancelled else { continue }
                 await MainActor.run {
-                    // Avoid updating while capture is stopping/restarting.
                     guard capturingInternal else { return }
                     if text == lastSystemRealtimePublishedNormalized { return }
                     lastSystemRealtimePublishedNormalized = text
@@ -398,7 +379,6 @@ final class ParakeetTranscriptionService: ObservableObject {
     }
 
     private func transcribeSystemSamplesAndSetText(_ samples: [Float], asrManager: AsrManager) async throws {
-        // Raw float buffers from ScreenCaptureKit match FluidAudio's default `[Float]` path (`.microphone`).
         let asrResult = try await asrManager.transcribe(samples, source: .microphone)
         let text = TranscriptionTextUtils.normalizeSystemText(asrResult.text)
         guard !text.isEmpty else { return }

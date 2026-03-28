@@ -188,7 +188,6 @@ final class ResizeHandleNSView: NSView {
     let minWidth = window.minSize.width
     let minHeight = window.minSize.height
     
-    // Resize from bottom-right corner: width increases right, height increases down (origin moves down)
     let newWidth = max(minWidth, startFrame.width + deltaX)
     let newHeight = max(minHeight, startFrame.height - deltaY)
     let newOriginY = startFrame.origin.y + (startFrame.height - newHeight)
