@@ -19,12 +19,18 @@ struct TranscriptDisplayChunk: Identifiable, Equatable {
     let text: String
     let timestamp: Date
     let speaker: TranscriptSpeaker
-    
-    init(text: String, timestamp: Date, speaker: TranscriptSpeaker) {
-        self.id = UUID()
+    let isPending: Bool
+
+    init(text: String, timestamp: Date, speaker: TranscriptSpeaker, id: UUID = UUID(), isPending: Bool = false) {
+        self.id = id
         self.text = text
         self.timestamp = timestamp
         self.speaker = speaker
+        self.isPending = isPending
+    }
+
+    static func == (lhs: TranscriptDisplayChunk, rhs: TranscriptDisplayChunk) -> Bool {
+        lhs.text == rhs.text && lhs.speaker == rhs.speaker && lhs.isPending == rhs.isPending
     }
 }
 
@@ -42,7 +48,10 @@ final class TranscriptBuffer: ObservableObject {
     private let duplicateCheckCount: Int
 
     private var tailChunks: [TranscriptChunk] = []
+    private var chunkIDs: [UUID] = []
     private var pendingText: String = ""
+    private var pendingSpeaker: TranscriptSpeaker = .you
+    private let pendingChunkID = UUID()
     private var sessionFileHandle: FileHandle?
     private var sessionURL: URL?
     private let isoFormatter = ISO8601DateFormatter()
@@ -106,6 +115,8 @@ final class TranscriptBuffer: ObservableObject {
         let trimmed = deltaText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        pendingSpeaker = speaker
+
         if pendingText.isEmpty {
             pendingText = trimmed
         } else {
@@ -123,8 +134,6 @@ final class TranscriptBuffer: ObservableObject {
         let extraction = extractCompleteSentences(from: pendingText)
         pendingText = extraction.remainder
 
-        guard !extraction.sentences.isEmpty else { return }
-
         for sentence in extraction.sentences {
             guard !isDuplicateRecentSentence(sentence, at: timestamp) else { continue }
             let chunk = TranscriptChunk(text: sentence, timestamp: timestamp, speaker: speaker)
@@ -132,11 +141,25 @@ final class TranscriptBuffer: ObservableObject {
             persist(chunk: chunk)
         }
         pruneTail(now: timestamp)
+        refreshDisplay()
     }
 
     func refreshDisplay() {
-        let newChunks = tailChunks.map { chunk in
-            TranscriptDisplayChunk(text: chunk.text, timestamp: chunk.timestamp, speaker: chunk.speaker)
+        while chunkIDs.count < tailChunks.count {
+            chunkIDs.append(UUID())
+        }
+
+        var newChunks = zip(tailChunks, chunkIDs).map { chunk, id in
+            TranscriptDisplayChunk(text: chunk.text, timestamp: chunk.timestamp, speaker: chunk.speaker, id: id)
+        }
+        let pending = pendingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !pending.isEmpty {
+            newChunks.append(
+                TranscriptDisplayChunk(
+                    text: pending, timestamp: Date(), speaker: pendingSpeaker,
+                    id: pendingChunkID, isPending: true
+                )
+            )
         }
         if newChunks != displayChunks {
             displayChunks = newChunks
@@ -165,7 +188,9 @@ final class TranscriptBuffer: ObservableObject {
         displayChunks = []
         latestQuestion = nil
         tailChunks.removeAll()
+        chunkIDs.removeAll()
         pendingText = ""
+        pendingSpeaker = .you
     }
 
     private func pruneTail(now: Date) {
@@ -173,9 +198,11 @@ final class TranscriptBuffer: ObservableObject {
         if let firstIndex = tailChunks.firstIndex(where: { $0.timestamp >= cutoff }) {
             if firstIndex > 0 {
                 tailChunks.removeFirst(firstIndex)
+                chunkIDs.removeFirst(min(firstIndex, chunkIDs.count))
             }
         } else {
             tailChunks.removeAll()
+            chunkIDs.removeAll()
         }
     }
 

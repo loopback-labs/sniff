@@ -23,6 +23,7 @@ struct TranscriptOverlayContentView: View {
                                     chunk: chunk,
                                     isHighlighted: isChunkHighlighted(chunk)
                                 )
+                                .opacity(chunk.isPending ? 0.6 : 1.0)
                                 .id(chunk.id)
                             }
                         }
@@ -31,7 +32,7 @@ struct TranscriptOverlayContentView: View {
                     .padding(.vertical, 4)
                 }
                 .frame(minHeight: 140)
-                .onChange(of: transcriptBuffer.displayChunks.count) { _, _ in
+                .onChange(of: transcriptBuffer.displayChunks) { _, _ in
                     if let lastChunk = transcriptBuffer.displayChunks.last {
                         withAnimation {
                             proxy.scrollTo(lastChunk.id, anchor: .bottom)
