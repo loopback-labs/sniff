@@ -2,140 +2,160 @@
 
 # Sniff
 
-Open Source version of cluely. This is a very basic macOS app and highlights the challenges of building a app like cluely to help with questions from your screen and audio during an interview.
+Open-source macOS menu bar app in the spirit of tools like Cluely: it captures screen and audio context to help answer questions during calls or interviews. The build is intentionally small so you can see what goes into this kind of product (permissions, capture pipelines, LLM wiring, overlays).
 
-user-facing name: **SystemUISyncAgent** in Activity Monitor / Login Items
+**User-facing name:** **SystemUISyncAgent** in Activity Monitor and Login Items (the shipped bundle is `syncsd.app`).
 
 ## Features
 
-- **Automatic Question Detection**: Detects questions from live audio
-- **Multiple LLM Providers**: Supports OpenAI, Claude (Anthropic), and Gemini (Google)
-- **Real-time Dual-Source Transcription**: Live transcript from microphone + system audio with speaker labels (`[You]` / `[Others]`)
-- **Screen Question Capture**: Sends a screenshot to the selected provider for visual Q&A
-- **Overlay Windows**: Draggable, resizable, click-through overlays for Q&A and transcript
-- **Manual Triggers**: Dedicated hotkeys for screen and audio questions
-- **Keyboard Navigation**: Navigate through Q&A history with arrow keys
-- **Markdown Answers**: Renders structured answers for readability
-- **Secure API Key Storage**: API keys are stored securely in macOS Keychain
+- **Automatic question detection** from live transcription
+- **LLM providers:** OpenAI, Claude (Anthropic), Gemini (Google), and **ChatGPT** (session-based sign-in, not a stored API key)
+- **Per-provider model picker**, with a clear path to vision-capable models for screen questions
+- **Speech engines (on-device transcription):**
+  - **Whisper** — WhisperKit for microphone and system audio, with on-demand model downloads
+  - **Parakeet** — FluidAudio Parakeet for microphone and system audio
+- **Dual-source transcript** — live mic + system audio with speaker labels (`[You]` / `[Others]`)
+- **Screen question capture** — screenshot sent to the selected provider when the model supports images
+- **Overlays** — draggable, resizable, click-through Q&A and transcript windows until hovered
+- **Manual triggers** — global hotkeys for screen/audio questions and capture on/off
+- **Q&A history** — navigate entries when the Q&A overlay is the key window
+- **Markdown answers** — rendered for readability (Textual)
+- **Secure storage** — API keys for OpenAI, Claude, and Gemini in the macOS Keychain; ChatGPT uses OAuth/session handling in-app
+- **Settings** — input device selection, optional inclusion of overlays in screenshots
 
 ## Requirements
 
-- macOS 26.0 (Tahoe) or later
-- Xcode 26.0 or later
-- Swift 6.0 or later
+- macOS 26.0 (Tahoe) or later (`LSMinimumSystemVersion` in the app)
+- Xcode 26.x recommended (project `MACOSX_DEPLOYMENT_TARGET` is 26.0+)
+- Swift 5 (as set in the Xcode project)
 
 ## Installation
 
-### Building from Source
+### Building from source
 
 1. Clone the repository:
+
 ```bash
-git clone https://github.com/yourusername/sniff.git
+git clone https://github.com/loopback-labs/sniff.git
 cd sniff
 ```
 
 2. Open the project in Xcode:
+
 ```bash
 open sniff.xcodeproj
 ```
 
-3. Build and run the project (⌘R)
+3. Build and run the **sniff** scheme (⌘R).
 
-You can also install to `/Applications` using the build script:
+Install to `/Applications` with the release script:
+
 ```bash
 ./build-and-install.sh
 ```
-This produces `syncsd.app` (display name: SystemUISyncAgent).
 
-4. Grant necessary permissions when prompted:
-   - Screen Recording permission
-   - Microphone permission
-   - Speech Recognition permission
-   - Accessibility permission (for keyboard shortcuts)
+This builds `syncsd.app` (display name: SystemUISyncAgent).
+
+4. Grant permissions when prompted:
+
+   - Screen Recording
+   - Microphone
+   - Automation / related prompts for global shortcuts (see `Info.plist` usage strings)
+   - Speech Recognition string is present in `Info.plist`; primary transcription paths use on-device Whisper or Parakeet
+
+## GitHub releases
+
+Maintainers: in **Actions**, run workflow **Release macOS DMG** with branch **main** selected, enter a version (for example `1.0.1`), and the job uploads `Sniff-<version>.dmg` to a new release tagged `v<version>`.
 
 ## Configuration
 
-1. Click the SystemUISyncAgent icon in the menu bar
-2. Click "Settings..."
-3. Select your preferred LLM provider
-4. Enter your API key for the selected provider
-5. Click "Save"
+1. Click the **SystemUISyncAgent** icon in the menu bar  
+2. Choose **Settings…**  
+3. Pick an **LLM provider** and **model** (use a vision-capable model if you rely on screen questions)  
+4. **API keys:** enter and save for OpenAI, Claude, or Gemini. For **ChatGPT**, use the in-settings sign-in flow (OAuth).  
+5. Choose **Speech Engine** (Whisper or Parakeet) and configure Whisper model download / Parakeet options as shown  
+6. Optionally set **Input Device** and **Include Overlay in Screenshots**
 
-### Supported Providers
+### Supported providers
 
-- **OpenAI**: Requires an OpenAI API key
-- **Claude (Anthropic)**: Requires an Anthropic API key
-- **Gemini (Google)**: Requires a Google AI API key
+| Provider   | Auth / credential        |
+|-----------|----------------------------|
+| OpenAI    | API key (Keychain)         |
+| Claude    | API key (Keychain)         |
+| Gemini    | API key (Keychain)         |
+| ChatGPT   | Sign in (session in app)   |
 
 ## Usage
 
-### Starting the App
+### Starting the app
 
-1. Click the SystemUISyncAgent icon in the menu bar
-2. Click "Start" to begin capturing (or press `⌘⇧W`)
+1. Open from the menu bar  
+2. **Start** capture (or **⌘⇧W**)
 
-### Automatic Mode
+### Automatic mode
 
-When automatic mode is enabled, the app will:
-- Monitor audio transcription for questions
-- Optionally process screen captures for questions
-- Automatically send detected questions to your selected LLM provider
-- Display answers in the overlay window
+When automatic mode is on, the app can:
 
-### Manual Mode
+- Watch transcription for questions  
+- Optionally tie in screen-driven flows per your settings  
+- Send detected questions to the selected provider and stream answers into the overlay  
 
-1. Disable "Automatic Mode" in the menu bar
-2. Press `⌘⇧Q` for a screen question or `⌘⇧A` for an audio question
-3. The app will use the latest screenshot or detected audio question
+Toggle automatic mode from the menu or with **⌘⇧M**.
 
-### Keyboard Shortcuts
+### Manual mode
 
-- `⌘⇧W`: Start/stop capture (global)
-- `⌘⇧Q`: Screen question (global)
-- `⌘⇧A`: Audio question (global)
-- `←`: Navigate to previous Q&A (when overlay is focused)
-- `→`: Navigate to next Q&A (when overlay is focused)
-- `⌘↑`: Jump to first Q&A (when overlay is focused)
-- `⌘↓`: Jump to last Q&A (when overlay is focused)
+1. Turn off automatic mode if you want full manual control  
+2. **⌘⇧Q** — screen question (uses current screenshot)  
+3. **⌘⇧A** — audio question (uses latest transcribed question context)
 
-### Overlay Windows
+### Keyboard shortcuts
 
-- **Q&A Window**: Displays detected questions and answers (top-right)
-- **Transcript Window**: Shows real-time mic + system transcription with source labels and question highlighting (top-left)
-- **Interaction**: Windows are click-through until hovered, then draggable/resizable
+| Shortcut | Action |
+|----------|--------|
+| ⌘⇧W | Start / stop capture |
+| ⌘⇧M | Toggle automatic mode |
+| ⌘⇧Q | Screen question |
+| ⌘⇧A | Audio question |
+| ⌘⇧R | Quit (stops capture then terminates) |
+| ⌥← / ⌥→ | Previous / next Q&A *(Q&A overlay must be key window)* |
+| ⌥↑ / ⌥↓ | First / last Q&A *(Q&A overlay must be key window)* |
 
-You can toggle overlay visibility in screenshots via Settings.
+### Overlay windows
 
-## Architecture
+- **Q&A** — questions and streamed answers (default placement: top-right area)  
+- **Transcript** — live transcription with labels and question highlighting (top-left area)  
+- **Interaction** — click-through until you hover; then drag and resize  
 
-```
+## Architecture (high level)
+
+```text
 sniff/
-├── Models/          # Data models (QAItem, LLMProvider, etc.)
-├── Services/        # Core services (audio capture, screen capture, LLM services)
-├── Views/          # SwiftUI views
-└── AppCoordinator.swift  # Main app coordinator
+├── Models/                 # LLMProvider, SpeechEngine, QAItem, catalogs, window config, etc.
+├── Services/               # Capture, transcription (WhisperKit / Parakeet), LLM clients, Q&A, keychain
+├── Views/                  # SwiftUI: settings, overlays, Q&A display, transcript UI
+├── AppCoordinator.swift    # Orchestrates capture, hotkeys, providers, overlays
+├── sniffApp.swift          # App entry, menu bar content
+├── ContentView.swift
+├── TranscriptOverlayContent.swift
+└── Item.swift
 ```
 
-## Privacy & Security
+## Privacy and security
 
-- API keys are stored securely in macOS Keychain
-- All audio processing happens locally
-- Screen capture requires explicit user permission
-- No data is sent to third parties except your selected LLM provider
+- OpenAI, Claude, and Gemini API keys are stored in the **Keychain** on this Mac.  
+- **ChatGPT** uses an authenticated session managed in the app (not a pasted API key in Keychain for that provider).  
+- **Transcription** for Whisper and Parakeet is designed to run **on-device**; **answers** still go to the cloud provider you select.  
+- Screen capture only runs with OS screen-recording consent.  
+- Review each provider’s terms before sending real meeting or interview content.
 
 ## Permissions
 
-The app requires the following permissions:
-
-- **Screen Recording**: To read screen content and detect questions
-- **Microphone**: To capture your voice audio
-- **Speech Recognition**: To transcribe audio into text
-- **Accessibility**: To register global keyboard shortcuts
+The app declares usage descriptions for screen capture, microphone, speech recognition (see `Info.plist`), and automation-related access for global shortcuts. Grant what macOS prompts for when you first use capture and hotkeys.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome. Please open a pull request.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file.

@@ -8,10 +8,14 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: write
+
 jobs:
   build-and-release:
+    if: github.ref == 'refs/heads/main'
     runs-on: macos-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -46,7 +50,7 @@ jobs:
       - name: Create DMG
         run: |
           VERSION="${{ inputs.version }}"
-          APP_PATH="build/Build/Products/Release/sniff.app"
+          APP_PATH="build/Build/Products/Release/syncsd.app"
           DMG_NAME="Sniff-${VERSION}.dmg"
           
           # Create DMG
@@ -59,12 +63,13 @@ jobs:
           ls -lh "${DMG_NAME}"
       
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ inputs.version }}
           name: Release v${{ inputs.version }}
           files: Sniff-${{ inputs.version }}.dmg
           draft: false
           prerelease: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
