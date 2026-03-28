@@ -22,7 +22,6 @@ enum LLMProvider: String, CaseIterable, Identifiable {
         }
     }
 
-    /// API key in Keychain vs OAuth (ChatGPT).
     var usesOAuth: Bool {
         switch self {
         case .chatgpt: return true
@@ -55,7 +54,6 @@ enum LLMError: Error {
     case invalidResponse
     case httpError(Int)
     case apiError(String)
-    /// Selected model does not support image input (screen questions).
     case imageInputNotSupportedByModel(String)
 }
 

@@ -11,7 +11,6 @@ import CoreAudio
 enum SystemAudioSampleBufferPCM {
     private static var didLogUnsupportedFormat = false
 
-    /// Downmixed mono float samples (~[-1, 1]) suitable for 16 kHz Whisper/Parakeet pipelines.
     static func extractMonoFloatSamples(from sampleBuffer: CMSampleBuffer) -> [Float]? {
         guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer) else { return nil }
         guard let asbdPtr = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) else { return nil }

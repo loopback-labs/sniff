@@ -42,8 +42,6 @@ class AppCoordinator: ObservableObject {
     @Published var automaticMode = false {
         didSet {
             guard isRunning else { return }
-            // Screen capture always runs for manual trigger
-            // Only toggle the auto-processing subscription
             if automaticMode {
                 setupScreenCaptureSubscription()
             } else {
@@ -246,28 +244,6 @@ class AppCoordinator: ObservableObject {
         parakeetService.configure(modelChoice: selectedParakeetModelChoice)
     }
 
-    // Legacy bookmark handling removed - using temporary exception entitlements instead
-    private func resolveBookmarkURL(forKey key: String) -> URL? {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
-        var isStale = false
-        do {
-            let url = try URL(
-                resolvingBookmarkData: data,
-                options: [.withSecurityScope],
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-            if isStale {
-                let newData = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
-                UserDefaults.standard.set(newData, forKey: key)
-            }
-            return url
-        } catch {
-            print("Failed to resolve bookmark \(key): \(error)")
-            return nil
-        }
-    }
-    
     private func setupSubscriptions() {
         let sourcePublishers = speechRouting(for: selectedSpeechEngine).sourcePublishers
         let mergedPublisher = Publishers.MergeMany(sourcePublishers.map { $0.publisher })
@@ -301,14 +277,12 @@ class AppCoordinator: ObservableObject {
                 guard !recentText.isEmpty else { return }
                 
                 let result = self.audioQuestionPipeline.process(recentText: recentText)
-                
-                // Always update the latest question (even if nil to clear old highlights)
+
                 if let latestQuestion = result.latestQuestion {
                     print("🔍 Detected audio question: \(latestQuestion.prefix(50))...")
                 }
                 self.transcriptBuffer.updateLatestQuestion(result.latestQuestion)
-                
-                // Process new questions in auto mode
+
                 if self.automaticMode {
                     for question in result.questions {
                         self.processQuestion(question, source: .audio, screenContext: nil)
@@ -368,8 +342,7 @@ class AppCoordinator: ObservableObject {
     
     func start() async {
         guard !isRunning else { return }
-        
-        // Check API key
+
         guard llmService != nil else {
             showSettingsWindow()
             return
@@ -423,8 +396,7 @@ class AppCoordinator: ObservableObject {
         await stopSpeechCapture(finalizeSystem: true)
         cancellables.removeAll()
         transcriptBuffer.stopSession()
-        
-        // Clean up hotkeys
+
         hotKeys.removeAll()
         
         for window in [qaOverlayWindow, transcriptOverlayWindow] {
@@ -474,55 +446,47 @@ class AppCoordinator: ObservableObject {
     }
     
     private func setupKeyboardShortcuts() {
-        // Clear any existing hotkeys
         hotKeys.removeAll()
-        
-        // Cmd+Shift+Q: Screen question trigger (global)
+
         let screenQuestionHotKey = HotKey(key: .q, modifiers: [.command, .shift])
         screenQuestionHotKey.keyDownHandler = { [weak self] in
             self?.triggerScreenQuestion()
         }
         hotKeys.append(screenQuestionHotKey)
-        
-        // Cmd+Shift+A: Audio question trigger (global)
+
         let audioQuestionHotKey = HotKey(key: .a, modifiers: [.command, .shift])
         audioQuestionHotKey.keyDownHandler = { [weak self] in
             self?.triggerAudioQuestion()
         }
         hotKeys.append(audioQuestionHotKey)
-        
-        // Cmd+Shift+M: Toggle Automatic Mode (global)
+
         let toggleAutomaticModeHotKey = HotKey(key: .m, modifiers: [.command, .shift])
         toggleAutomaticModeHotKey.keyDownHandler = { [weak self] in
             self?.automaticMode.toggle()
         }
         hotKeys.append(toggleAutomaticModeHotKey)
-        
-        // Option+Left arrow: Previous (only when overlay is key)
+
         let optionLeftKey = HotKey(key: .leftArrow, modifiers: [.option])
         optionLeftKey.keyDownHandler = { [weak self] in
             guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
             self.qaManager.goToPrevious()
         }
         hotKeys.append(optionLeftKey)
-        
-        // Option+Right arrow: Next (only when overlay is key)
+
         let optionRightKey = HotKey(key: .rightArrow, modifiers: [.option])
         optionRightKey.keyDownHandler = { [weak self] in
             guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
             self.qaManager.goToNext()
         }
         hotKeys.append(optionRightKey)
-        
-        // Option+Up: First (only when overlay is key)
+
         let optionUpKey = HotKey(key: .upArrow, modifiers: [.option])
         optionUpKey.keyDownHandler = { [weak self] in
             guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
             self.qaManager.goToFirst()
         }
         hotKeys.append(optionUpKey)
-        
-        // Option+Down: Last (only when overlay is key)
+
         let optionDownKey = HotKey(key: .downArrow, modifiers: [.option])
         optionDownKey.keyDownHandler = { [weak self] in
             guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
@@ -530,7 +494,6 @@ class AppCoordinator: ObservableObject {
         }
         hotKeys.append(optionDownKey)
 
-        // Cmd+Shift+R: Quits the app
         let quitHotKey = HotKey(key: .r, modifiers: [.command, .shift])
         quitHotKey.keyDownHandler = { [weak self] in
             guard let self = self else { return }
@@ -565,7 +528,6 @@ class AppCoordinator: ObservableObject {
     }
 
     private func resolveAudioQuestion(from audioText: String) -> String? {
-        // First check if we have a latest detected question
         if let latestQuestion = transcriptBuffer.latestQuestion {
             print("   Using latest detected question: \(latestQuestion.prefix(50))...")
             return latestQuestion
@@ -576,7 +538,6 @@ class AppCoordinator: ObservableObject {
             return nil
         }
 
-        // Try to detect question from audio
         if let question = questionDetectionService.firstQuestion(in: audioText) {
             print("   Detected question: \(question.prefix(50))...")
             return question
@@ -664,8 +625,7 @@ class AppCoordinator: ObservableObject {
     
     func showSettingsWindow() {
         NSApplication.shared.activate(ignoringOtherApps: true)
-        
-        // If settings window exists and is visible, just bring it to front
+
         if let existingWindow = settingsWindow, existingWindow.isVisible {
             existingWindow.makeKeyAndOrderFront(nil)
             existingWindow.orderFrontRegardless()

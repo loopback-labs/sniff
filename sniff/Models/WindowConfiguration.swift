@@ -9,8 +9,7 @@ struct WindowConfiguration {
     let name: String
     let size: NSSize
     let position: WindowPosition
-    
-    // Styling
+
     let backgroundOpacity: CGFloat
     let padding: CGFloat
     let showResizeHandle: Bool
@@ -18,8 +17,7 @@ struct WindowConfiguration {
     enum WindowPosition {
         case topLeft, topRight
     }
-    
-    // Predefined configs
+
     static let qaOverlay = WindowConfiguration(
         name: "Q&A",
         size: NSSize(width: 620, height: 600),

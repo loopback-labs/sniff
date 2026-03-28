@@ -36,9 +36,22 @@
 		8A8A90ED2F18E5E100BA66C5 /* sniffUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = sniffUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		8A62A02D2F78066A0017D4E9 /* Exceptions for "sniff" folder in "sniff" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 8A8A90D32F18E5DF00BA66C5 /* sniff */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		8A8A90D62F18E5DF00BA66C5 /* sniff */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				8A62A02D2F78066A0017D4E9 /* Exceptions for "sniff" folder in "sniff" target */,
+			);
 			path = sniff;
 			sourceTree = "<group>";
 		};
@@ -186,7 +199,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2620;
-				LastUpgradeCheck = 2620;
+				LastUpgradeCheck = 2640;
 				TargetAttributes = {
 					8A8A90D32F18E5DF00BA66C5 = {
 						CreatedOnToolsVersion = 26.2;
@@ -213,7 +226,7 @@
 			packageReferences = (
 				8A8A91AE2F1E3AAC00BA66C5 /* XCRemoteSwiftPackageReference "HotKey" */,
 				8A8E40E82F2150A6000613D6 /* XCRemoteSwiftPackageReference "textual" */,
-				8A8A91C12F3A2B2B00C0FFEE /* XCRemoteSwiftPackageReference "FluidAudio" */,
+				8A8A91C12F3A2B2B00C0FFEE /* XCLocalSwiftPackageReference "LocalPackages/FluidAudio" */,
 				8AF10C5A302A4A9D00B11A10 /* XCRemoteSwiftPackageReference "WhisperKit" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -324,6 +337,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 3YQZ2TJCPG;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -349,6 +363,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -388,6 +403,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 3YQZ2TJCPG;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -406,6 +422,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
@@ -420,6 +437,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 3YQZ2TJCPG;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -458,6 +476,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 3YQZ2TJCPG;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -492,6 +511,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 3YQZ2TJCPG;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -513,6 +533,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 3YQZ2TJCPG;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -533,6 +554,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 3YQZ2TJCPG;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -553,6 +575,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 3YQZ2TJCPG;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -609,6 +632,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		8A8A91C12F3A2B2B00C0FFEE /* XCLocalSwiftPackageReference "LocalPackages/FluidAudio" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = LocalPackages/FluidAudio;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		8A8A91AE2F1E3AAC00BA66C5 /* XCRemoteSwiftPackageReference "HotKey" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -616,14 +646,6 @@
 			requirement = {
 				kind = exactVersion;
 				version = 0.2.1;
-			};
-		};
-		8A8A91C12F3A2B2B00C0FFEE /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
-			requirement = {
-				kind = exactVersion;
-				version = 0.12.4;
 			};
 		};
 		8A8E40E82F2150A6000613D6 /* XCRemoteSwiftPackageReference "textual" */ = {
@@ -652,7 +674,7 @@
 		};
 		8A8A91C22F3A2B2B00C0FFEF /* FluidAudio */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 8A8A91C12F3A2B2B00C0FFEE /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			package = 8A8A91C12F3A2B2B00C0FFEE /* XCLocalSwiftPackageReference "LocalPackages/FluidAudio" */;
 			productName = FluidAudio;
 		};
 		8A8E40E92F2150A6000613D6 /* Textual */ = {

@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-// import AppKit
 
 @main
 struct sniffApp: App {
