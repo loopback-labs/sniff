@@ -137,7 +137,7 @@ final class LocalWhisperService: ObservableObject {
         }
 
         let modelFolder = try await Self.downloadModel(named: modelID)
-        var config = WhisperKitConfig(
+        let config = WhisperKitConfig(
             model: variant,
             modelRepo: "argmaxinc/whisperkit-coreml",
             modelFolder: modelFolder.path,
