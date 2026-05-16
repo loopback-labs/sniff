@@ -12,6 +12,7 @@ enum UserDefaultsKeys {
   static let showOverlay = "showOverlay"
   static let selectedAudioInputDeviceUID = "selectedAudioInputDeviceUID"
   static let whisperModelId = "whisperModelId"
+  static let screenRecordingPromptRequested = "screenRecordingPromptRequested"
 
   static let llmModelIdPrefix = "llmModelId_"
 

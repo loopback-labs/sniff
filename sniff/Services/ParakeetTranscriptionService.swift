@@ -1,16 +1,21 @@
 import Foundation
 import AVFoundation
 import Combine
-import CoreMedia
 import FluidAudio
 
+@MainActor
 final class ParakeetTranscriptionService: ObservableObject {
     @Published var micTranscribedText: String = ""
     @Published var systemTranscribedText: String = ""
     @Published var isCapturing: Bool = false
 
     private let audioEngine = AVAudioEngine()
-    private let audioConverter = AudioConverter()
+    private lazy var micSampleBridge = MicSampleBridge(label: "com.sniff.parakeet.mic") { [weak self] samples in
+        Task { @MainActor [weak self] in
+            guard let self, self.capturingInternal else { return }
+            self.enqueueVadChunks(from: samples)
+        }
+    }
 
     private let micChunkSamples: Int = 4096 // 256ms @ 16kHz
     private let micSampleRate: Double = 16000
@@ -74,8 +79,6 @@ final class ParakeetTranscriptionService: ObservableObject {
     func startCapture() async throws {
         guard !isCapturing else { return }
 
-        await MainActor.run { isCapturing = true }
-
         capturingInternal = true
         shouldFinalizeMic = false
         collectingSpeech = false
@@ -83,16 +86,21 @@ final class ParakeetTranscriptionService: ObservableObject {
         currentMicSegmentMaxProbability = 0
         vadInputBuffer.removeAll()
 
-        try await ensureManagersLoaded()
-
-        startVadLoopIfNeeded()
-        startMicCapture()
-
-        startSystemRealtimeTranscriptionLoop()
+        do {
+            try await ensureManagersLoaded()
+            try startMicCapture()
+            startVadLoopIfNeeded()
+            startSystemRealtimeTranscriptionLoop()
+            isCapturing = true
+        } catch {
+            capturingInternal = false
+            stopMicCapture()
+            throw error
+        }
     }
 
     func stopCapture(finalizeSystem: Bool) async {
-        guard isCapturing else { return }
+        guard capturingInternal || isCapturing else { return }
 
         capturingInternal = false
         shouldFinalizeMic = finalizeSystem
@@ -112,9 +120,7 @@ final class ParakeetTranscriptionService: ObservableObject {
         await vadLoopTask?.value
         vadLoopTask = nil
 
-        await MainActor.run {
-            isCapturing = false
-        }
+        isCapturing = false
 
         if finalizeSystem {
             await transcribeSystemAudio()
@@ -124,19 +130,13 @@ final class ParakeetTranscriptionService: ObservableObject {
         if !finalizeSystem {
             accumulatedMicText = ""
             lastSystemRealtimePublishedNormalized = ""
-            await MainActor.run { micTranscribedText = "" }
-            await MainActor.run { systemTranscribedText = "" }
+            micTranscribedText = ""
+            systemTranscribedText = ""
         }
     }
 
-    func appendSystemAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
-        if !capturingInternal {
-            return
-        }
-        guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
-
-        guard let floats = extractFloatSamples(from: sampleBuffer) else { return }
-        guard !floats.isEmpty else { return }
+    func appendSystemAudioFloats(_ floats: [Float]) {
+        guard capturingInternal else { return }
         systemSamples.append(contentsOf: floats)
     }
 
@@ -144,7 +144,7 @@ final class ParakeetTranscriptionService: ObservableObject {
         if asrManager == nil {
             let models = try await AsrModels.downloadAndLoad(version: asrModelVersion)
             let asr = AsrManager(config: .default)
-            try await asr.initialize(models: models)
+            try await asr.loadModels(models)
             asrManager = asr
         }
 
@@ -154,27 +154,33 @@ final class ParakeetTranscriptionService: ObservableObject {
         }
     }
 
-    private func startMicCapture() {
+    private func transcribeParakeetChunk(_ samples: [Float], asrManager: AsrManager) async throws -> ASRResult {
+        let layers = await asrManager.decoderLayerCount
+        var decoderState = TdtDecoderState.make(decoderLayers: layers)
+        return try await asrManager.transcribe(samples, decoderState: &decoderState)
+    }
+
+    private func startMicCapture() throws {
         guard !audioEngine.isRunning else { return }
 
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
 
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw ParakeetError.invalidAudioInputFormat
+        }
+
         let bus: AVAudioNodeBus = 0
         inputNode.removeTap(onBus: bus)
 
-        inputNode.installTap(onBus: bus, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            guard self.capturingInternal else { return }
+        let bridge = micSampleBridge
 
-            guard let converted = try? self.audioConverter.resampleBuffer(buffer) else { return }
-            guard !converted.isEmpty else { return }
-
-            self.enqueueVadChunks(from: converted)
+        inputNode.installTap(onBus: bus, bufferSize: 1024, format: inputFormat) { buffer, _ in
+            bridge.process(buffer)
         }
 
         audioEngine.prepare()
-        try? audioEngine.start()
+        try audioEngine.start()
     }
 
     private func stopMicCapture() {
@@ -190,7 +196,7 @@ final class ParakeetTranscriptionService: ObservableObject {
             self.vadContinuation = continuation
         }
 
-        vadLoopTask = Task.detached(priority: .userInitiated) { [weak self] in
+        vadLoopTask = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             await self.runVadLoop(vadManager: vadManager, chunks: stream)
         }
@@ -271,15 +277,13 @@ final class ParakeetTranscriptionService: ObservableObject {
         guard durationSeconds >= minMicChunkDuration || force else { return }
         guard currentMicSegmentMaxProbability >= micProbabilityThreshold || force else { return }
 
-        let asrResult = try await asrManager.transcribe(samples, source: .microphone)
+        let asrResult = try await transcribeParakeetChunk(samples, asrManager: asrManager)
         let segmentText = asrResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !segmentText.isEmpty else { return }
 
         accumulatedMicText = TranscriptionTextUtils.appendWithBoundarySmoothing(accumulatedMicText, segmentText)
 
-        await MainActor.run {
-            micTranscribedText = accumulatedMicText
-        }
+        micTranscribedText = accumulatedMicText
     }
 
     private func enqueueVadChunks(from samples: [Float]) {
@@ -310,7 +314,7 @@ final class ParakeetTranscriptionService: ObservableObject {
         guard systemRealtimeTranscriptionTask == nil else { return }
         systemRealtimeLastSampleCount = 0
 
-        systemRealtimeTranscriptionTask = Task.detached(priority: .userInitiated) { [weak self] in
+        systemRealtimeTranscriptionTask = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             await self.runSystemRealtimeTranscriptionLoop()
         }
@@ -328,11 +332,7 @@ final class ParakeetTranscriptionService: ObservableObject {
             }
 
             guard capturingInternal, !Task.isCancelled else { break }
-
-            let snapshot: [Float] = await MainActor.run {
-                guard capturingInternal else { return [] }
-                return systemSamples
-            }
+            let snapshot = systemSamples
 
             guard !snapshot.isEmpty else { continue }
             let snapshotCount = snapshot.count
@@ -341,7 +341,7 @@ final class ParakeetTranscriptionService: ObservableObject {
                 continue
             }
 
-            // SCStream floats: transcribe with .microphone; cap tail; skip ASR when recent tail is silent.
+            // SCStream floats: same decode path as mic; cap tail; skip ASR when recent tail is silent.
             do {
                 guard !Task.isCancelled else { return }
                 let tail = snapshot.count > systemRealtimeWindowSamples
@@ -359,17 +359,15 @@ final class ParakeetTranscriptionService: ObservableObject {
 
                 systemRealtimeLastSampleCount = snapshotCount
 
-                let asrResult = try await asrManager.transcribe(tail, source: .microphone)
+                let asrResult = try await transcribeParakeetChunk(tail, asrManager: asrManager)
                 let raw = asrResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if raw.isEmpty { continue }
                 let text = TranscriptionTextUtils.normalizeSystemText(asrResult.text)
                 guard !text.isEmpty, !Task.isCancelled else { continue }
-                await MainActor.run {
-                    guard capturingInternal else { return }
-                    if text == lastSystemRealtimePublishedNormalized { return }
-                    lastSystemRealtimePublishedNormalized = text
-                    systemTranscribedText = text
-                }
+                guard capturingInternal else { continue }
+                guard text != lastSystemRealtimePublishedNormalized else { continue }
+                lastSystemRealtimePublishedNormalized = text
+                systemTranscribedText = text
             } catch {
                 if !Task.isCancelled {
                     print("⚠️ Parakeet realtime system transcription failed: \(error.localizedDescription)")
@@ -379,16 +377,21 @@ final class ParakeetTranscriptionService: ObservableObject {
     }
 
     private func transcribeSystemSamplesAndSetText(_ samples: [Float], asrManager: AsrManager) async throws {
-        let asrResult = try await asrManager.transcribe(samples, source: .microphone)
+        let asrResult = try await transcribeParakeetChunk(samples, asrManager: asrManager)
         let text = TranscriptionTextUtils.normalizeSystemText(asrResult.text)
         guard !text.isEmpty else { return }
-        await MainActor.run {
-            systemTranscribedText = text
-        }
+        systemTranscribedText = text
     }
+}
 
-    private func extractFloatSamples(from sampleBuffer: CMSampleBuffer) -> [Float]? {
-        SystemAudioSampleBufferPCM.extractMonoFloatSamples(from: sampleBuffer)
+enum ParakeetError: Error, LocalizedError {
+    case invalidAudioInputFormat
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidAudioInputFormat:
+            return "No valid audio input device found. Check microphone connection and permissions."
+        }
     }
 }
 

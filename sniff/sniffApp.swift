@@ -9,7 +9,14 @@ import SwiftUI
 
 @main
 struct sniffApp: App {
-    @StateObject private var coordinator = AppCoordinator()
+    @StateObject private var coordinator: AppCoordinator
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
+    init() {
+        let coord = AppCoordinator()
+        _coordinator = StateObject(wrappedValue: coord)
+        AppDelegate.registerCoordinator(coord)
+    }
     
     var body: some Scene {
         MenuBarExtra("Sniff", systemImage: "questionmark.bubble") {

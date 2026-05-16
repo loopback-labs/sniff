@@ -9,12 +9,12 @@ import SwiftUI
 import AppKit
 import Combine
 import CoreGraphics
-import CoreMedia
 import HotKey
 
 @MainActor
-class AppCoordinator: ObservableObject {
+class AppCoordinator: NSObject, ObservableObject {
     let screenCaptureService = ScreenCaptureService()
+    let appPermissions = AppPermissions()
     let localWhisperService = LocalWhisperService()
     let parakeetService = ParakeetTranscriptionService()
     let audioDeviceService = AudioDeviceService()
@@ -28,10 +28,12 @@ class AppCoordinator: ObservableObject {
     private var qaOverlayWindow: NSWindow?
     private var transcriptOverlayWindow: NSWindow?
     private var settingsWindow: NSWindow?
+    private var permissionOnboardingWindow: NSWindow?
     private var hotKeys: [HotKey] = []
     private var toggleHotKey: HotKey?
     private var cancellables = Set<AnyCancellable>()
     private let audioQuestionPipeline: AudioQuestionPipeline
+    private var isCaptureTransitioning = false
     private let whisperMicDeltaProcessor = TranscriptionDeltaProcessor()
     private let whisperSystemDeltaProcessor = TranscriptionDeltaProcessor()
     private let parakeetMicDeltaProcessor = TranscriptionDeltaProcessor()
@@ -81,7 +83,7 @@ class AppCoordinator: ObservableObject {
         }
     }
     
-    init() {
+    override init() {
         let savedProvider = UserDefaults.standard.string(forKey: UserDefaultsKeys.selectedLLMProvider) ?? LLMProvider.openai.rawValue
         let initialLLMProvider = LLMProvider(rawValue: savedProvider) ?? .openai
         selectedProvider = initialLLMProvider
@@ -94,10 +96,12 @@ class AppCoordinator: ObservableObject {
         audioQuestionPipeline = AudioQuestionPipeline(questionDetectionService: questionDetectionService)
 
         selectedModelId = LLMModelCatalog.loadOrDefaultModelId(for: initialLLMProvider)
-        
+
+        super.init()
+
         rebuildLLMService()
         applySavedAudioInputDevice()
-        
+
         toggleHotKey = HotKey(key: .w, modifiers: [.command, .shift])
         toggleHotKey?.keyDownHandler = { [weak self] in
             self?.toggle()
@@ -129,7 +133,6 @@ class AppCoordinator: ObservableObject {
     private struct SpeechEngineRouting {
         let sourcePublishers: [(speaker: TranscriptSpeaker, publisher: AnyPublisher<String, Never>)]
         let startCapture: () async throws -> Void
-        let routeSystemAudio: (CMSampleBuffer) -> Void
         let deltaProcessor: (TranscriptSpeaker) -> TranscriptionDeltaProcessor
     }
 
@@ -145,9 +148,6 @@ class AppCoordinator: ObservableObject {
                     guard let self else { throw CancellationError() }
                     self.configureWhisperService()
                     try await self.localWhisperService.startCapture()
-                },
-                routeSystemAudio: { [weak self] buffer in
-                    self?.localWhisperService.appendSystemAudioSampleBuffer(buffer)
                 },
                 deltaProcessor: { speaker in
                     switch speaker {
@@ -166,9 +166,6 @@ class AppCoordinator: ObservableObject {
                     guard let self else { throw CancellationError() }
                     self.configureParakeetService()
                     try await self.parakeetService.startCapture()
-                },
-                routeSystemAudio: { [weak self] buffer in
-                    self?.parakeetService.appendSystemAudioSampleBuffer(buffer)
                 },
                 deltaProcessor: { speaker in
                     switch speaker {
@@ -196,16 +193,20 @@ class AppCoordinator: ObservableObject {
 
     private func restartSpeechCapture() async {
         guard isRunning else { return }
+        guard !isCaptureTransitioning else { return }
+        isCaptureTransitioning = true
+        defer { isCaptureTransitioning = false }
 
         let engineForSystemAudio = selectedSpeechEngine
         await stopSpeechCapture(finalizeSystem: false)
+        await screenCaptureService.stopCapture()
         resetDeltaProcessors()
         localWhisperService.reset()
         parakeetService.reset()
         cancellables.removeAll()
         setupSubscriptions()
         do {
-            await screenCaptureService.stopCapture()
+            try await startSpeechCapture(using: engineForSystemAudio)
             do {
                 try await screenCaptureService.startCapture(
                     enableSystemAudio: true,
@@ -214,7 +215,6 @@ class AppCoordinator: ObservableObject {
             } catch {
                 print("⚠️ System audio capture unavailable after restart; continuing with microphone-only transcription: \(error)")
             }
-            try await startSpeechCapture(using: engineForSystemAudio)
         } catch {
             print("Failed to restart speech capture: \(error)")
         }
@@ -294,11 +294,17 @@ class AppCoordinator: ObservableObject {
         .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func makeSystemAudioHandler(for engine: SpeechEngine) -> (CMSampleBuffer) -> Void {
-        let route = speechRouting(for: engine).routeSystemAudio
-        return { sampleBuffer in
-            Task { @MainActor in
-                route(sampleBuffer)
+    private func makeSystemAudioHandler(for engine: SpeechEngine) -> @Sendable ([Float]) -> Void {
+        switch engine {
+        case .whisper:
+            let service = localWhisperService
+            return { floats in
+                Task { @MainActor in service.appendSystemAudioFloats(floats) }
+            }
+        case .parakeet:
+            let service = parakeetService
+            return { floats in
+                Task { @MainActor in service.appendSystemAudioFloats(floats) }
             }
         }
     }
@@ -315,11 +321,16 @@ class AppCoordinator: ObservableObject {
     
     func start() async {
         guard !isRunning else { return }
+        guard !isCaptureTransitioning else { return }
+        isCaptureTransitioning = true
+        defer { isCaptureTransitioning = false }
 
         guard llmService != nil else {
             showSettingsWindow()
             return
         }
+
+        guard await requestPermissions() else { return }
         
         transcriptBuffer.clear()
         resetDeltaProcessors()
@@ -331,9 +342,9 @@ class AppCoordinator: ObservableObject {
         transcriptBuffer.startSession(saveDirectoryURL: saveURL)
         audioQuestionPipeline.reset()
         setupSubscriptions()
-        await requestPermissions()
         
         do {
+            try await startSpeechCapture(using: selectedSpeechEngine)
             do {
                 try await screenCaptureService.startCapture(
                     enableSystemAudio: true,
@@ -343,19 +354,24 @@ class AppCoordinator: ObservableObject {
                 print("⚠️ Screen/system audio capture unavailable; continuing with microphone-only transcription: \(error)")
             }
 
-            try await startSpeechCapture(using: selectedSpeechEngine)
             createQAOverlayWindow()
             createTranscriptOverlayWindow()
             setupKeyboardShortcuts()
             isRunning = true
         } catch {
             print("Failed to start services: \(error)")
+            await screenCaptureService.stopCapture()
+            await stopSpeechCapture(finalizeSystem: false)
             cancellables.removeAll()
+            transcriptBuffer.stopSession()
         }
     }
     
     func stop() async {
         guard isRunning else { return }
+        guard !isCaptureTransitioning else { return }
+        isCaptureTransitioning = true
+        defer { isCaptureTransitioning = false }
 
         await screenCaptureService.stopCapture()
         await stopSpeechCapture(finalizeSystem: true)
@@ -375,13 +391,58 @@ class AppCoordinator: ObservableObject {
         isRunning = false
     }
     
-    func requestPermissions() async {
-        let granted = await withCheckedContinuation { continuation in
-            continuation.resume(returning: CGRequestScreenCaptureAccess())
+    func requestPermissions() async -> Bool {
+        await appPermissions.refreshAccurate()
+        if appPermissions.allGranted { return true }
+        presentPermissionOnboardingWindow()
+        return false
+    }
+
+    func evaluatePermissionOnboardingAtLaunch() async {
+        // Give TCC daemon extra time to initialise on macOS 26 before querying.
+        try? await Task.sleep(for: .milliseconds(500))
+        await appPermissions.refreshAccurate()
+        if appPermissions.allGranted {
+            dismissPermissionOnboardingIfAllGranted()
+        } else {
+            presentPermissionOnboardingWindow()
         }
-        if !granted {
-            print("Screen recording permission denied")
+    }
+
+    func presentPermissionOnboardingWindow() {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+
+        if let existing = permissionOnboardingWindow, existing.isVisible {
+            existing.orderFrontRegardless()
+            return
         }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 400),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Sniff permissions"
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+
+        let root = PermissionOnboardingView(permissions: appPermissions)
+            .onChange(of: appPermissions.allGranted) { _, granted in
+                if granted {
+                    self.dismissPermissionOnboardingIfAllGranted()
+                }
+            }
+        window.contentView = NSHostingView(rootView: root)
+        window.center()
+        window.orderFrontRegardless()
+        permissionOnboardingWindow = window
+    }
+
+    func dismissPermissionOnboardingIfAllGranted() {
+        guard appPermissions.allGranted else { return }
+        permissionOnboardingWindow?.close()
+        permissionOnboardingWindow = nil
     }
     
     private func createQAOverlayWindow() {
@@ -638,5 +699,14 @@ class AppCoordinator: ObservableObject {
         if transcriptOverlayWindow == nil {
             createTranscriptOverlayWindow()
         }
+    }
+}
+
+extension AppCoordinator: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        guard let closed = notification.object as? NSWindow,
+              let current = permissionOnboardingWindow,
+              closed === current else { return }
+        permissionOnboardingWindow = nil
     }
 }

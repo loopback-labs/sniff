@@ -6,7 +6,7 @@
 import Foundation
 
 enum LLMServiceFactory {
-  static func makeService(
+  @MainActor static func makeService(
     provider: LLMProvider,
     modelId: String,
     keychain: KeychainService,

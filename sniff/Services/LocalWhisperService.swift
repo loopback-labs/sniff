@@ -27,7 +27,12 @@ final class LocalWhisperService: ObservableObject {
     private static let downloadedModelPathMapKey = "whisperDownloadedModelPaths"
 
     private let audioEngine = AVAudioEngine()
-    private let audioConverter = AudioConverter()
+    private lazy var micSampleBridge = MicSampleBridge(label: "com.sniff.whisper.mic") { [weak self] samples in
+        Task { @MainActor [weak self] in
+            guard let self, self.capturingInternal else { return }
+            self.micSamples.append(contentsOf: samples)
+        }
+    }
 
     private var configuredModelID: String = LocalWhisperService.defaultModelID()
     private var loadedModelVariant: String?
@@ -73,7 +78,7 @@ final class LocalWhisperService: ObservableObject {
         systemRealtimeLastSampleCount = 0
         transcriptionInFlight = false
 
-        startMicCapture()
+        try startMicCapture()
         startRealtimeLoops()
         isCapturing = true
     }
@@ -108,11 +113,8 @@ final class LocalWhisperService: ObservableObject {
         isCapturing = false
     }
 
-    func appendSystemAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
+    func appendSystemAudioFloats(_ floats: [Float]) {
         guard capturingInternal else { return }
-        guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
-        guard let floats = SystemAudioSampleBufferPCM.extractMonoFloatSamples(from: sampleBuffer) else { return }
-        guard !floats.isEmpty else { return }
         systemSamples.append(contentsOf: floats)
     }
 
@@ -154,24 +156,25 @@ final class LocalWhisperService: ObservableObject {
         UserDefaults.standard.set(modelID, forKey: Self.modelSelectionKey)
     }
 
-    private func startMicCapture() {
+    private func startMicCapture() throws {
         guard !audioEngine.isRunning else { return }
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
+
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw LocalWhisperError.transcriptionFailed("No valid audio input device. Check microphone connection and permissions.")
+        }
+
         inputNode.removeTap(onBus: 0)
 
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            guard self.capturingInternal else { return }
-            guard let converted = try? self.audioConverter.resampleBuffer(buffer) else { return }
-            guard !converted.isEmpty else { return }
-            Task { @MainActor [weak self] in
-                self?.micSamples.append(contentsOf: converted)
-            }
+        let bridge = micSampleBridge
+
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, _ in
+            bridge.process(buffer)
         }
 
         audioEngine.prepare()
-        try? audioEngine.start()
+        try audioEngine.start()
     }
 
     private func stopMicCapture() {
