@@ -50,7 +50,7 @@ jobs:
       - name: Create DMG
         run: |
           VERSION="${{ inputs.version }}"
-          APP_PATH="build/Build/Products/Release/syncsd.app"
+          APP_PATH="build/Build/Products/Release/Sniff.app"
           DMG_NAME="Sniff-${VERSION}.dmg"
           DMG_CONTENT_DIR="dmg-content"
 
