@@ -37,7 +37,7 @@ fi
 echo -e "${GREEN}Build succeeded!${NC}"
 
 # Find the built app from the derived data path we just used
-APP_PATH="$DERIVED_DATA_PATH/Build/Products/Release/syncsd.app"
+APP_PATH="$DERIVED_DATA_PATH/Build/Products/Release/Sniff.app"
 
 if [ ! -d "$APP_PATH" ]; then
     echo -e "${RED}Error: Could not find built app${NC}"
@@ -49,8 +49,8 @@ echo -e "${YELLOW}Found app at: $APP_PATH${NC}"
 # Install to Applications folder
 echo -e "${YELLOW}Installing to /Applications...${NC}"
 
-# Remove old version(s) if they exist (sniff.app = legacy, syncsd.app = previous install)
-for old_app in "/Applications/sniff.app" "/Applications/syncsd.app"; do
+# Remove old version(s) if they exist
+for old_app in "/Applications/sniff.app" "/Applications/syncsd.app" "/Applications/Sniff.app"; do
     if [ -d "$old_app" ]; then
         echo -e "${YELLOW}Removing old version ($old_app)...${NC}"
         rm -rf "$old_app"
@@ -61,13 +61,13 @@ done
 cp -R "$APP_PATH" /Applications/
 
 if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✓ SystemUISyncAgent (syncsd.app) successfully installed to /Applications/${NC}"
+    echo -e "${GREEN}✓ Sniff.app successfully installed to /Applications/${NC}"
     echo ""
     echo "You can now launch the app from:"
     echo "  • Applications folder"
-    echo "  • Spotlight (⌘Space, type 'SystemUISyncAgent' or 'syncsd')"
-    echo "  • Command: open /Applications/syncsd.app"
-    echo "  • Kill from terminal: pkill syncsd"
+    echo "  • Spotlight (⌘Space, type 'Sniff')"
+    echo "  • Command: open /Applications/Sniff.app"
+    echo "  • Kill from terminal: pkill Sniff"
     echo ""
     echo -e "${YELLOW}Note: Remember to grant required permissions on first launch:${NC}"
     echo "  • Screen Recording"

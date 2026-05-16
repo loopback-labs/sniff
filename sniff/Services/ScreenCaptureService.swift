@@ -11,20 +11,21 @@ import ScreenCaptureKit
 import AppKit
 import CoreMedia
 
+@MainActor
 class ScreenCaptureService: NSObject, ObservableObject {
     private var contentFilter: SCContentFilter?
     private var stream: SCStream?
     // .screen output must be registered or SCK logs dropped frames; samples unused (screenshots via SCScreenshotManager).
     private let screenOutputQueue = DispatchQueue(label: "com.sniff.screen.output", qos: .utility)
     private let audioOutputQueue = DispatchQueue(label: "com.sniff.audio.output", qos: .userInitiated)
-    nonisolated(unsafe) private var audioSampleHandler: ((CMSampleBuffer) -> Void)?
-    nonisolated(unsafe) private var isSystemAudioEnabled = false
+    private var isSystemAudioEnabled = false
+    nonisolated private let audioRelay = SystemAudioRelay()
 
     @Published var isCapturing: Bool = false
 
     func startCapture(
         enableSystemAudio: Bool,
-        audioSampleHandler: ((CMSampleBuffer) -> Void)? = nil
+        audioSampleHandler: (@Sendable ([Float]) -> Void)? = nil
     ) async throws {
         guard !isCapturing else { return }
 
@@ -35,7 +36,7 @@ class ScreenCaptureService: NSObject, ObservableObject {
 
         let filter = SCContentFilter(display: display, excludingWindows: [])
         self.contentFilter = filter
-        self.audioSampleHandler = audioSampleHandler
+        self.audioRelay.setHandler(audioSampleHandler)
         self.isSystemAudioEnabled = enableSystemAudio
 
         let configuration = SCStreamConfiguration()
@@ -67,9 +68,7 @@ class ScreenCaptureService: NSObject, ObservableObject {
             return
         }
 
-        await MainActor.run {
-            self.isCapturing = false
-        }
+        isCapturing = false
 
         if isSystemAudioEnabled {
             do {
@@ -93,7 +92,7 @@ class ScreenCaptureService: NSObject, ObservableObject {
 
         self.stream = nil
         self.contentFilter = nil
-        self.audioSampleHandler = nil
+        self.audioRelay.clearHandler()
         self.isSystemAudioEnabled = false
     }
 
@@ -134,8 +133,10 @@ extension ScreenCaptureService: SCStreamOutput {
         case .screen:
             break
         case .audio:
-            guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
-            audioSampleHandler?(sampleBuffer)
+            guard CMSampleBufferDataIsReady(sampleBuffer),
+                  let floats = SystemAudioSampleBufferPCM.extractMonoFloatSamples(from: sampleBuffer),
+                  !floats.isEmpty else { return }
+            audioRelay.send(floats)
         case .microphone:
             break
         @unknown default:
@@ -146,4 +147,26 @@ extension ScreenCaptureService: SCStreamOutput {
 
 enum ScreenCaptureError: Error {
     case noDisplay
+}
+
+private nonisolated final class SystemAudioRelay: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handler: (@Sendable ([Float]) -> Void)?
+
+    func setHandler(_ handler: (@Sendable ([Float]) -> Void)?) {
+        lock.lock()
+        self.handler = handler
+        lock.unlock()
+    }
+
+    func clearHandler() {
+        setHandler(nil)
+    }
+
+    func send(_ samples: [Float]) {
+        lock.lock()
+        let handler = handler
+        lock.unlock()
+        handler?(samples)
+    }
 }

@@ -4,6 +4,9 @@
 # codex
 .codex/
 AGENTS.md
+# claudecode
+.claude
+/CLAUDE.md
 
 .serena/
 

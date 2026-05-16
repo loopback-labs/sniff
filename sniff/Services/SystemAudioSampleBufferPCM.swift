@@ -7,9 +7,10 @@
 
 import CoreMedia
 import CoreAudio
+import os
 
 enum SystemAudioSampleBufferPCM {
-    private static var didLogUnsupportedFormat = false
+    private static let loggedUnsupportedFormat = OSAllocatedUnfairLock(initialState: false)
 
     static func extractMonoFloatSamples(from sampleBuffer: CMSampleBuffer) -> [Float]? {
         guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer) else { return nil }
@@ -119,9 +120,11 @@ enum SystemAudioSampleBufferPCM {
                 return out
             }
         } else {
-            if !didLogUnsupportedFormat {
-                didLogUnsupportedFormat = true
-                print("⚠️ System audio sample format not handled: isFloat=\(isFloat) bitsPerChannel=\(bitsPerChannel) channels=\(numberOfChannels)")
+            loggedUnsupportedFormat.withLock { alreadyLogged in
+                if !alreadyLogged {
+                    alreadyLogged = true
+                    print("⚠️ System audio sample format not handled: isFloat=\(isFloat) bitsPerChannel=\(bitsPerChannel) channels=\(numberOfChannels)")
+                }
             }
             return nil
         }

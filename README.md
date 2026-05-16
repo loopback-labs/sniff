@@ -4,7 +4,7 @@
 
 Open-source macOS menu bar app in the spirit of tools like Cluely: it captures screen and audio context to help answer questions during calls or interviews. The build is intentionally small so you can see what goes into this kind of product (permissions, capture pipelines, LLM wiring, overlays).
 
-**User-facing name:** **SystemUISyncAgent** in Activity Monitor and Login Items (the shipped bundle is `syncsd.app`).
+**User-facing name:** **Sniff** in Activity Monitor, Login Items, and System Settings (the shipped bundle is `Sniff.app`).
 
 ## Features
 
@@ -54,14 +54,14 @@ Install to `/Applications` with the release script:
 ./build-and-install.sh
 ```
 
-This builds `syncsd.app` (display name: SystemUISyncAgent).
+This builds `Sniff.app`.
 
 4. Grant permissions when prompted:
 
-   - Screen Recording
+   - Screen & System Audio Recording
    - Microphone
-   - Automation / related prompts for global shortcuts (see `Info.plist` usage strings)
    - Speech Recognition string is present in `Info.plist`; primary transcription paths use on-device Whisper or Parakeet
+   - After granting Screen & System Audio Recording, quit and reopen Sniff if macOS asks for a relaunch.
 
 ## GitHub releases
 
@@ -69,7 +69,7 @@ Maintainers: in **Actions**, run workflow **Release macOS DMG** with branch **ma
 
 ## Configuration
 
-1. Click the **SystemUISyncAgent** icon in the menu bar  
+1. Click the **Sniff** icon in the menu bar  
 2. Choose **Settings…**  
 3. Pick an **LLM provider** and **model** (use a vision-capable model if you rely on screen questions)  
 4. **API keys:** enter and save for OpenAI, Claude, or Gemini. For **ChatGPT**, use the in-settings sign-in flow (OAuth).  
@@ -136,7 +136,7 @@ sniff/
 
 ## Permissions
 
-The app declares usage descriptions for screen capture, microphone, speech recognition (see `Info.plist`), and automation-related access for global shortcuts. Grant what macOS prompts for when you first use capture and hotkeys.
+The startup onboarding requires Screen & System Audio Recording and Microphone. The app also declares speech-recognition and automation-related usage strings in `Info.plist`; primary transcription paths use on-device Whisper or Parakeet.
 
 ## Contributing
 

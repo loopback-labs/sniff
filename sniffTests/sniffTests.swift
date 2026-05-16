@@ -6,8 +6,9 @@
 //
 
 import Foundation
+import Combine
 import Testing
-@testable import syncsd
+@testable import Sniff
 
 @MainActor
 struct sniffTests {
@@ -664,5 +665,42 @@ struct sniffTests {
         #expect(chatgptIds.isSubset(of: openaiIds))
         #expect(chatgptIds.contains("gpt-4o"))
         #expect(chatgptIds.contains("gpt-4o-mini"))
+    }
+
+    // MARK: - ScreenCaptureService Concurrency Regression Tests
+    // These tests guard against the Swift 6 crash where @Published mutations in
+    // ScreenCaptureService occurred off the main thread after async suspension.
+
+    @Test func screenCaptureServiceStartsNotCapturing() {
+        let service = ScreenCaptureService()
+        #expect(service.isCapturing == false)
+    }
+
+    @Test func screenCaptureServiceStopWhenIdleIsNoop() async {
+        let service = ScreenCaptureService()
+        #expect(service.isCapturing == false)
+        await service.stopCapture()
+        #expect(service.isCapturing == false)
+    }
+
+    @Test func screenCaptureServicePublishedMutationIsOnMainThread() async {
+        let service = ScreenCaptureService()
+        var mutationWasOnMainThread = true
+
+        let cancellable = service.objectWillChange.sink {
+            mutationWasOnMainThread = Thread.isMainThread
+        }
+
+        await service.stopCapture()
+        // objectWillChange fires synchronously before the mutation on @MainActor,
+        // so it has already been called by the time the await returns.
+        #expect(mutationWasOnMainThread)
+        _ = cancellable
+    }
+
+    @Test func screenCaptureServiceCaptureFrameWithoutActiveSessionReturnsNil() async {
+        let service = ScreenCaptureService()
+        let frame = await service.captureCurrentFrame()
+        #expect(frame == nil)
     }
 }

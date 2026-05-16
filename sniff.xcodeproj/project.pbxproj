@@ -31,7 +31,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		8A8A90D42F18E5DF00BA66C5 /* syncsd.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = syncsd.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8A8A90D42F18E5DF00BA66C5 /* Sniff.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Sniff.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8A8A90E32F18E5E100BA66C5 /* sniffTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = sniffTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8A8A90ED2F18E5E100BA66C5 /* sniffUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = sniffUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -109,7 +109,7 @@
 		8A8A90D52F18E5DF00BA66C5 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				8A8A90D42F18E5DF00BA66C5 /* syncsd.app */,
+				8A8A90D42F18E5DF00BA66C5 /* Sniff.app */,
 				8A8A90E32F18E5E100BA66C5 /* sniffTests.xctest */,
 				8A8A90ED2F18E5E100BA66C5 /* sniffUITests.xctest */,
 			);
@@ -142,7 +142,7 @@
 				8AF10C5B302A4A9D00B11A10 /* WhisperKit */,
 			);
 			productName = sniff;
-			productReference = 8A8A90D42F18E5DF00BA66C5 /* syncsd.app */;
+			productReference = 8A8A90D42F18E5DF00BA66C5 /* Sniff.app */;
 			productType = "com.apple.product-type.application";
 		};
 		8A8A90E22F18E5E100BA66C5 /* sniffTests */ = {
@@ -226,8 +226,8 @@
 			packageReferences = (
 				8A8A91AE2F1E3AAC00BA66C5 /* XCRemoteSwiftPackageReference "HotKey" */,
 				8A8E40E82F2150A6000613D6 /* XCRemoteSwiftPackageReference "textual" */,
-				8A8A91C12F3A2B2B00C0FFEE /* XCLocalSwiftPackageReference "LocalPackages/FluidAudio" */,
-				8AF10C5A302A4A9D00B11A10 /* XCRemoteSwiftPackageReference "WhisperKit" */,
+				8A8A91C12F3A2B2B00C0FFEE /* XCRemoteSwiftPackageReference "FluidAudio" */,
+				8AF10C5A302A4A9D00B11A10 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8A8A90D52F18E5DF00BA66C5 /* Products */;
@@ -311,6 +311,7 @@
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_EXPLICIT_MODULES = NO;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_ENABLE_OBJC_WEAK = YES;
@@ -340,7 +341,6 @@
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 3YQZ2TJCPG;
-				CLANG_ENABLE_EXPLICIT_MODULES = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -378,7 +378,9 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_COVERAGE_MAPPING = NO;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_EXPLICIT_MODULES = NO;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_ENABLE_OBJC_WEAK = YES;
@@ -404,8 +406,6 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CLANG_COVERAGE_MAPPING = NO;
-				CLANG_ENABLE_EXPLICIT_MODULES = NO;
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
@@ -451,7 +451,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = sniff/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = SystemUISyncAgent;
+				INFOPLIST_KEY_CFBundleDisplayName = Sniff;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -461,14 +461,11 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.loopbacklabs.sniff;
-				PRODUCT_NAME = syncsd;
+				PRODUCT_NAME = Sniff;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 5;
 			};
 			name = Debug;
 		};
@@ -490,7 +487,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = sniff/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = SystemUISyncAgent;
+				INFOPLIST_KEY_CFBundleDisplayName = Sniff;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -500,14 +497,11 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.loopbacklabs.sniff;
-				PRODUCT_NAME = syncsd;
+				PRODUCT_NAME = Sniff;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 5;
 			};
 			name = Release;
 		};
@@ -525,11 +519,9 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.loopbacklabs.sniffTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/syncsd.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/syncsd";
+				SWIFT_VERSION = 5;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Sniff.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Sniff";
 			};
 			name = Debug;
 		};
@@ -547,11 +539,9 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.loopbacklabs.sniffTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/syncsd.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/syncsd";
+				SWIFT_VERSION = 5;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Sniff.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Sniff";
 			};
 			name = Release;
 		};
@@ -568,10 +558,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.loopbacklabs.sniffUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 5;
 				TEST_TARGET_NAME = sniff;
 			};
 			name = Debug;
@@ -589,10 +577,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.loopbacklabs.sniffUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 5;
 				TEST_TARGET_NAME = sniff;
 			};
 			name = Release;
@@ -638,13 +624,6 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		8A8A91C12F3A2B2B00C0FFEE /* XCLocalSwiftPackageReference "LocalPackages/FluidAudio" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = LocalPackages/FluidAudio;
-		};
-/* End XCLocalSwiftPackageReference section */
-
 /* Begin XCRemoteSwiftPackageReference section */
 		8A8A91AE2F1E3AAC00BA66C5 /* XCRemoteSwiftPackageReference "HotKey" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -652,6 +631,14 @@
 			requirement = {
 				kind = exactVersion;
 				version = 0.2.1;
+			};
+		};
+		8A8A91C12F3A2B2B00C0FFEE /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.14.5;
 			};
 		};
 		8A8E40E82F2150A6000613D6 /* XCRemoteSwiftPackageReference "textual" */ = {
@@ -662,12 +649,12 @@
 				minimumVersion = 0.3.1;
 			};
 		};
-		8AF10C5A302A4A9D00B11A10 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+		8AF10C5A302A4A9D00B11A10 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/argmaxinc/WhisperKit.git";
+			repositoryURL = "https://github.com/argmaxinc/argmax-oss-swift";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.17.0;
+				minimumVersion = 1.0.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -680,7 +667,7 @@
 		};
 		8A8A91C22F3A2B2B00C0FFEF /* FluidAudio */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 8A8A91C12F3A2B2B00C0FFEE /* XCLocalSwiftPackageReference "LocalPackages/FluidAudio" */;
+			package = 8A8A91C12F3A2B2B00C0FFEE /* XCRemoteSwiftPackageReference "FluidAudio" */;
 			productName = FluidAudio;
 		};
 		8A8E40E92F2150A6000613D6 /* Textual */ = {
@@ -690,7 +677,7 @@
 		};
 		8AF10C5B302A4A9D00B11A10 /* WhisperKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 8AF10C5A302A4A9D00B11A10 /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			package = 8AF10C5A302A4A9D00B11A10 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */;
 			productName = WhisperKit;
 		};
 /* End XCSwiftPackageProductDependency section */

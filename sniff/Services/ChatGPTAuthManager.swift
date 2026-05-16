@@ -298,13 +298,13 @@ final class ChatGPTAuthManager: ObservableObject {
 
 // MARK: - Loopback server
 
-private final class OAuthLoopbackServer {
+private final class OAuthLoopbackServer: @unchecked Sendable {
   private let listener: NWListener
   private let path: String
-  private var onComplete: ((Result<String, Error>) -> Void)?
+  nonisolated(unsafe) private var onComplete: ((Result<String, Error>) -> Void)?
   private let queue = DispatchQueue(label: "com.loopbacklabs.sniff.oauth")
 
-  init(port: UInt16, path: String) throws {
+  nonisolated init(port: UInt16, path: String) throws {
     self.path = path
     guard let p = NWEndpoint.Port(rawValue: port) else {
       throw ChatGPTAuthError.listenerFailed("Invalid port")
@@ -312,7 +312,7 @@ private final class OAuthLoopbackServer {
     self.listener = try NWListener(using: .tcp, on: p)
   }
 
-  func start(completion: @escaping (Result<String, Error>) -> Void) {
+  nonisolated func start(completion: @escaping (Result<String, Error>) -> Void) {
     onComplete = completion
     listener.stateUpdateHandler = { [weak self] state in
       if case .failed(let err) = state {
@@ -325,32 +325,32 @@ private final class OAuthLoopbackServer {
     listener.start(queue: queue)
   }
 
-  func cancel() {
+  nonisolated func cancel() {
     listener.cancel()
     onComplete = nil
   }
 
-  private func finish(_ result: Result<String, Error>) {
+  nonisolated private func finish(_ result: Result<String, Error>) {
     guard let cb = onComplete else { return }
     onComplete = nil
     listener.cancel()
     cb(result)
   }
 
-  private func handle(_ connection: NWConnection) {
+  nonisolated private func handle(_ connection: NWConnection) {
     connection.start(queue: queue)
     read(connection: connection, buffer: Data())
   }
 
-  private func read(connection: NWConnection, buffer: Data) {
+  nonisolated private func read(connection: NWConnection, buffer: Data) {
     connection.receive(minimumIncompleteLength: 1, maximumLength: 1_048_576) { [weak self] data, _, isComplete, error in
-      guard let self = self else { return }
-      if let error = error {
+      guard let self else { return }
+      if let error {
         self.finish(.failure(error))
         return
       }
       var buf = buffer
-      if let data = data { buf.append(data) }
+      if let data { buf.append(data) }
       if let s = String(data: buf, encoding: .utf8), s.contains("\r\n\r\n") {
         self.parseRequest(buf, connection: connection)
         return
@@ -363,7 +363,7 @@ private final class OAuthLoopbackServer {
     }
   }
 
-  private func parseRequest(_ raw: Data, connection: NWConnection) {
+  nonisolated private func parseRequest(_ raw: Data, connection: NWConnection) {
     guard let req = String(data: raw, encoding: .utf8) else {
       sendHTML(connection: connection, status: "400 Bad Request", body: "Bad request")
       finish(.failure(ChatGPTAuthError.callbackParseFailed))
@@ -400,7 +400,7 @@ private final class OAuthLoopbackServer {
     finish(.success(query))
   }
 
-  private func sendHTML(connection: NWConnection, status: String, body: String) {
+  nonisolated private func sendHTML(connection: NWConnection, status: String, body: String) {
     let resp = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
     connection.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in })
   }
