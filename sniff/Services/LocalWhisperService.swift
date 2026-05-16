@@ -31,6 +31,11 @@ final class LocalWhisperService: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self, self.capturingInternal else { return }
             self.micSamples.append(contentsOf: samples)
+            if self.micSamples.count > self.realtimeWindowSamples {
+                let excess = self.micSamples.count - self.realtimeWindowSamples
+                self.micSamples.removeFirst(excess)
+                self.micUnprocessedStart = max(0, self.micUnprocessedStart - excess)
+            }
         }
     }
 
@@ -50,8 +55,10 @@ final class LocalWhisperService: ObservableObject {
     private var micRealtimeTask: Task<Void, Never>?
     private var systemRealtimeTask: Task<Void, Never>?
 
-    private var micRealtimeLastSampleCount = 0
-    private var systemRealtimeLastSampleCount = 0
+    private let contextOverlapSamples: Int = 32_000
+    private var micUnprocessedStart: Int = 0
+    private var systemUnprocessedStart: Int = 0
+    private var accumulatedSystemText = ""
 
     private let realtimeIntervalSeconds: TimeInterval = 1.0
     private let realtimeMinInitialSamples: Int = 16_000
@@ -74,8 +81,8 @@ final class LocalWhisperService: ObservableObject {
         capturingInternal = true
         micSamples.removeAll(keepingCapacity: true)
         systemSamples.removeAll(keepingCapacity: true)
-        micRealtimeLastSampleCount = 0
-        systemRealtimeLastSampleCount = 0
+        micUnprocessedStart = 0
+        systemUnprocessedStart = 0
         transcriptionInFlight = false
 
         try startMicCapture()
@@ -107,8 +114,8 @@ final class LocalWhisperService: ObservableObject {
 
         micSamples.removeAll(keepingCapacity: true)
         systemSamples.removeAll(keepingCapacity: true)
-        micRealtimeLastSampleCount = 0
-        systemRealtimeLastSampleCount = 0
+        micUnprocessedStart = 0
+        systemUnprocessedStart = 0
         transcriptionInFlight = false
         isCapturing = false
     }
@@ -116,18 +123,24 @@ final class LocalWhisperService: ObservableObject {
     func appendSystemAudioFloats(_ floats: [Float]) {
         guard capturingInternal else { return }
         systemSamples.append(contentsOf: floats)
+        if systemSamples.count > realtimeWindowSamples {
+            let excess = systemSamples.count - realtimeWindowSamples
+            systemSamples.removeFirst(excess)
+            systemUnprocessedStart = max(0, systemUnprocessedStart - excess)
+        }
     }
 
     func reset() {
         micTranscribedText = ""
         systemTranscribedText = ""
         accumulatedMicText = ""
+        accumulatedSystemText = ""
         lastMicPublishedNormalized = ""
         lastSystemPublishedNormalized = ""
         micSamples.removeAll()
         systemSamples.removeAll()
-        micRealtimeLastSampleCount = 0
-        systemRealtimeLastSampleCount = 0
+        micUnprocessedStart = 0
+        systemUnprocessedStart = 0
     }
 
     private func ensureWhisperKitReady() async throws {
@@ -206,26 +219,31 @@ final class LocalWhisperService: ObservableObject {
             }
 
             guard capturingInternal else { break }
-            let snapshot = micSamples
-            let snapshotCount = snapshot.count
-            guard snapshotCount >= realtimeMinInitialSamples else { continue }
-            guard snapshotCount - micRealtimeLastSampleCount >= realtimeMinNewSamples || micRealtimeLastSampleCount == 0 else { continue }
+            let totalSamples = micSamples.count
+            guard totalSamples >= realtimeMinInitialSamples else { continue }
 
-            let tail = snapshotCount > realtimeWindowSamples
-                ? Array(snapshot.suffix(realtimeWindowSamples))
-                : snapshot
-            guard !tail.isEmpty else { continue }
+            let unprocessedCount = totalSamples - micUnprocessedStart
+            guard unprocessedCount >= realtimeMinNewSamples else { continue }
 
-            let recentCount = min(realtimeRecentActivitySamples, tail.count)
-            let recentTail = Array(tail.suffix(recentCount))
+            let recentTail = Array(micSamples.suffix(min(realtimeRecentActivitySamples, unprocessedCount)))
             guard TranscriptionTextUtils.rootMeanSquare(of: recentTail) >= realtimeSilenceRMSThreshold else {
-                micRealtimeLastSampleCount = snapshotCount
+                micUnprocessedStart = totalSamples
                 continue
             }
 
-            micRealtimeLastSampleCount = snapshotCount
+            let windowStart = max(0, micUnprocessedStart - contextOverlapSamples)
+            let skipBeforeSeconds = windowStart > 0 ? Double(contextOverlapSamples) / 16000.0 : 0
+            let tail = Array(micSamples[windowStart...])
+
+            micUnprocessedStart = totalSamples
+
+            if windowStart > 0 {
+                micSamples.removeFirst(windowStart)
+                micUnprocessedStart -= windowStart
+            }
+
             do {
-                let text = try await transcribe(samples: tail)
+                let text = try await transcribe(samples: tail, skipBeforeSeconds: skipBeforeSeconds)
                 guard !text.isEmpty else { continue }
                 let normalized = Self.normalize(text)
                 guard normalized != lastMicPublishedNormalized else { continue }
@@ -250,31 +268,38 @@ final class LocalWhisperService: ObservableObject {
             }
 
             guard capturingInternal else { break }
-            let snapshot = systemSamples
-            let snapshotCount = snapshot.count
-            guard snapshotCount >= realtimeMinInitialSamples else { continue }
-            guard snapshotCount - systemRealtimeLastSampleCount >= realtimeMinNewSamples || systemRealtimeLastSampleCount == 0 else { continue }
+            let totalSamples = systemSamples.count
+            guard totalSamples >= realtimeMinInitialSamples else { continue }
 
-            let tail = snapshotCount > realtimeWindowSamples
-                ? Array(snapshot.suffix(realtimeWindowSamples))
-                : snapshot
-            guard !tail.isEmpty else { continue }
+            let unprocessedCount = totalSamples - systemUnprocessedStart
+            guard unprocessedCount >= realtimeMinNewSamples else { continue }
 
-            let recentCount = min(realtimeRecentActivitySamples, tail.count)
-            let recentTail = Array(tail.suffix(recentCount))
+            let recentTail = Array(systemSamples.suffix(min(realtimeRecentActivitySamples, unprocessedCount)))
             guard TranscriptionTextUtils.rootMeanSquare(of: recentTail) >= realtimeSilenceRMSThreshold else {
-                systemRealtimeLastSampleCount = snapshotCount
+                systemUnprocessedStart = totalSamples
                 continue
             }
 
-            systemRealtimeLastSampleCount = snapshotCount
+            let windowStart = max(0, systemUnprocessedStart - contextOverlapSamples)
+            let skipBeforeSeconds = windowStart > 0 ? Double(contextOverlapSamples) / 16000.0 : 0
+            let tail = Array(systemSamples[windowStart...])
+
+            systemUnprocessedStart = totalSamples
+
+            if windowStart > 0 {
+                systemSamples.removeFirst(windowStart)
+                systemUnprocessedStart -= windowStart
+            }
+
             do {
-                let raw = try await transcribe(samples: tail)
+                let raw = try await transcribe(samples: tail, skipBeforeSeconds: skipBeforeSeconds)
                 guard !raw.isEmpty else { continue }
                 let text = TranscriptionTextUtils.normalizeSystemText(raw)
-                guard !text.isEmpty, text != lastSystemPublishedNormalized else { continue }
+                guard !text.isEmpty else { continue }
+                guard text != lastSystemPublishedNormalized else { continue }
                 lastSystemPublishedNormalized = text
-                systemTranscribedText = text
+                accumulatedSystemText = TranscriptionTextUtils.appendWithBoundarySmoothing(accumulatedSystemText, text)
+                systemTranscribedText = accumulatedSystemText
             } catch {
                 if !Task.isCancelled {
                     print("⚠️ [WhisperKit] Realtime system transcription failed: \(error.localizedDescription)")
@@ -304,13 +329,14 @@ final class LocalWhisperService: ObservableObject {
             let raw = try await transcribe(samples: systemSamples)
             let text = TranscriptionTextUtils.normalizeSystemText(raw)
             guard !text.isEmpty else { return }
-            systemTranscribedText = text
+            accumulatedSystemText = TranscriptionTextUtils.appendWithBoundarySmoothing(accumulatedSystemText, text)
+            systemTranscribedText = accumulatedSystemText
         } catch {
             print("⚠️ [WhisperKit] Final system transcription failed: \(error.localizedDescription)")
         }
     }
 
-    private func transcribe(samples: [Float]) async throws -> String {
+    private func transcribe(samples: [Float], skipBeforeSeconds: Double = 0) async throws -> String {
         guard !transcriptionInFlight else { return "" }
         guard let whisperKit else {
             throw LocalWhisperError.transcriptionFailed("WhisperKit not initialized")
@@ -326,11 +352,20 @@ final class LocalWhisperService: ObservableObject {
             wordTimestamps: false
         )
         let results = try await whisperKit.transcribe(audioArray: samples, decodeOptions: options)
-        let text = results
+
+        if skipBeforeSeconds > 0 {
+            return results
+                .flatMap { $0.segments }
+                .filter { Double($0.start) >= skipBeforeSeconds }
+                .map { $0.text }
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return results
             .map(\.text)
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return text
     }
 
     private static func normalize(_ text: String) -> String {
