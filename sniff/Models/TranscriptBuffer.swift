@@ -193,6 +193,53 @@ final class TranscriptBuffer: ObservableObject {
         pendingSpeaker = .you
     }
 
+    /// Completed chunks (already pruned to `displayWindowSeconds`) plus the pending partial utterance, oldest first.
+    func recentTurns() -> [(speaker: TranscriptSpeaker, text: String)] {
+        var turns = tailChunks.map { (speaker: $0.speaker, text: $0.text) }
+        let pending = pendingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !pending.isEmpty {
+            turns.append((speaker: pendingSpeaker, text: pending))
+        }
+        return turns
+    }
+
+    /// Full session transcript from disk, speaker-labeled and tail-truncated to `maxCharacters`. Returns nil if unavailable.
+    func fullSessionTranscript(maxCharacters: Int) -> String? {
+        guard let sessionURL, let raw = try? String(contentsOf: sessionURL, encoding: .utf8) else {
+            return nil
+        }
+
+        let lines = raw.split(separator: "\n").compactMap { line -> String? in
+            formatPersistedLine(String(line))
+        }
+        guard !lines.isEmpty else { return nil }
+
+        var result: [String] = []
+        var length = 0
+        for line in lines.reversed() {
+            let addedLength = line.count + (result.isEmpty ? 0 : 1)
+            if length + addedLength > maxCharacters { break }
+            result.append(line)
+            length += addedLength
+        }
+        return result.reversed().joined(separator: "\n")
+    }
+
+    private func formatPersistedLine(_ line: String) -> String? {
+        guard let closingBracket = line.firstIndex(of: "]") else { return nil }
+        let afterTimestamp = line.index(after: closingBracket)
+        let remainder = line[afterTimestamp...].trimmingCharacters(in: .whitespaces)
+        if remainder.hasPrefix(TranscriptSpeaker.you.displayLabel) {
+            let text = remainder.dropFirst(TranscriptSpeaker.you.displayLabel.count).trimmingCharacters(in: .whitespaces)
+            return "You: \(text)"
+        }
+        if remainder.hasPrefix(TranscriptSpeaker.others.displayLabel) {
+            let text = remainder.dropFirst(TranscriptSpeaker.others.displayLabel.count).trimmingCharacters(in: .whitespaces)
+            return "Them: \(text)"
+        }
+        return nil
+    }
+
     private func pruneTail(now: Date) {
         let cutoff = now.addingTimeInterval(-displayWindowSeconds)
         if let firstIndex = tailChunks.firstIndex(where: { $0.timestamp >= cutoff }) {

@@ -33,6 +33,7 @@ class AppCoordinator: NSObject, ObservableObject {
     private var toggleHotKey: HotKey?
     private var cancellables = Set<AnyCancellable>()
     private let audioQuestionPipeline: AudioQuestionPipeline
+    private let promptBuilder = PromptBuilder()
     private var isCaptureTransitioning = false
     private let whisperMicDeltaProcessor = TranscriptionDeltaProcessor()
     private let whisperSystemDeltaProcessor = TranscriptionDeltaProcessor()
@@ -82,6 +83,8 @@ class AppCoordinator: NSObject, ObservableObject {
             updateOverlayVisibility()
         }
     }
+    @Published var askComposerFocusToken = UUID()
+    @Published var isAskComposerFocused = false
     
     override init() {
         let savedProvider = UserDefaults.standard.string(forKey: UserDefaultsKeys.selectedLLMProvider) ?? LLMProvider.openai.rawValue
@@ -488,28 +491,28 @@ class AppCoordinator: NSObject, ObservableObject {
 
         let optionLeftKey = HotKey(key: .leftArrow, modifiers: [.option])
         optionLeftKey.keyDownHandler = { [weak self] in
-            guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
+            guard let self = self, self.qaOverlayWindow?.isKeyWindow == true, !self.isAskComposerFocused else { return }
             self.qaManager.goToPrevious()
         }
         hotKeys.append(optionLeftKey)
 
         let optionRightKey = HotKey(key: .rightArrow, modifiers: [.option])
         optionRightKey.keyDownHandler = { [weak self] in
-            guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
+            guard let self = self, self.qaOverlayWindow?.isKeyWindow == true, !self.isAskComposerFocused else { return }
             self.qaManager.goToNext()
         }
         hotKeys.append(optionRightKey)
 
         let optionUpKey = HotKey(key: .upArrow, modifiers: [.option])
         optionUpKey.keyDownHandler = { [weak self] in
-            guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
+            guard let self = self, self.qaOverlayWindow?.isKeyWindow == true, !self.isAskComposerFocused else { return }
             self.qaManager.goToFirst()
         }
         hotKeys.append(optionUpKey)
 
         let optionDownKey = HotKey(key: .downArrow, modifiers: [.option])
         optionDownKey.keyDownHandler = { [weak self] in
-            guard let self = self, self.qaOverlayWindow?.isKeyWindow == true else { return }
+            guard let self = self, self.qaOverlayWindow?.isKeyWindow == true, !self.isAskComposerFocused else { return }
             self.qaManager.goToLast()
         }
         hotKeys.append(optionDownKey)
@@ -525,26 +528,92 @@ class AppCoordinator: NSObject, ObservableObject {
             }
         }
         hotKeys.append(quitHotKey)
+
+        let sayNextHotKey = HotKey(key: .s, modifiers: [.command, .shift])
+        sayNextHotKey.keyDownHandler = { [weak self] in
+            self?.runMode(.sayNext)
+        }
+        hotKeys.append(sayNextHotKey)
+
+        let followUpsHotKey = HotKey(key: .f, modifiers: [.command, .shift])
+        followUpsHotKey.keyDownHandler = { [weak self] in
+            self?.runMode(.followUps)
+        }
+        hotKeys.append(followUpsHotKey)
+
+        let recapHotKey = HotKey(key: .e, modifiers: [.command, .shift])
+        recapHotKey.keyDownHandler = { [weak self] in
+            self?.runMode(.recap)
+        }
+        hotKeys.append(recapHotKey)
+
+        let askComposerHotKey = HotKey(key: .k, modifiers: [.command, .shift])
+        askComposerHotKey.keyDownHandler = { [weak self] in
+            self?.focusAskComposer()
+        }
+        hotKeys.append(askComposerHotKey)
     }
-    
+
     func triggerScreenQuestion() {
         print("🖥️ Screen question triggered")
-        Task {
-            guard let imageData = await screenCaptureService.captureCurrentFrame() else {
-                print("⚠️ No screenshot available")
-                return
-            }
-            print("   Screenshot available: \(imageData.count) bytes")
-            processScreenImage(imageData)
-        }
+        runMode(.solveScreen)
     }
-    
+
     func triggerAudioQuestion() {
         print("🎙️ Audio question triggered")
-        let audioText = currentTranscribedText()
-        print("   Audio text: \(audioText.isEmpty ? "empty" : String(audioText.prefix(50)))")
-        guard let question = resolveAudioQuestion(from: audioText) else { return }
-        processQuestion(question, source: .manual, screenContext: nil)
+        runMode(.answerQuestion)
+    }
+
+    func focusAskComposer() {
+        qaOverlayWindow?.makeKeyAndOrderFront(nil)
+        askComposerFocusToken = UUID()
+    }
+
+    /// Central entry point for every prompting mode (detected question, screenshot solve, say-next,
+    /// follow-ups, recap, typed ask). Builds context-aware prompts via `PromptBuilder` and streams
+    /// the answer through the currently selected provider.
+    func runMode(_ mode: PromptMode, typedText: String? = nil) {
+        switch mode {
+        case .answerQuestion:
+            let audioText = currentTranscribedText()
+            print("   Audio text: \(audioText.isEmpty ? "empty" : String(audioText.prefix(50)))")
+            guard let question = resolveAudioQuestion(from: audioText) else { return }
+            guard !isDuplicateRecent(question) else {
+                print("⚠️ Duplicate question detected, skipping: \(question)")
+                return
+            }
+            startMode(mode, bubbleText: question, source: .manual, detectedQuestion: question)
+
+        case .solveScreen:
+            Task {
+                guard let imageData = await screenCaptureService.captureCurrentFrame() else {
+                    print("⚠️ No screenshot available")
+                    return
+                }
+                print("   Screenshot available: \(imageData.count) bytes")
+                startMode(mode, bubbleText: mode.displayBubble ?? "", source: .screen, imageData: imageData)
+            }
+
+        case .sayNext:
+            startMode(mode, bubbleText: mode.displayBubble ?? "", source: .sayNext)
+
+        case .followUps:
+            startMode(mode, bubbleText: mode.displayBubble ?? "", source: .followUps)
+
+        case .recap:
+            startMode(mode, bubbleText: mode.displayBubble ?? "", source: .recap)
+
+        case .ask:
+            let text = (typedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+            Task {
+                var imageData: Data?
+                if modelSupportsVision() {
+                    imageData = await screenCaptureService.captureCurrentFrame()
+                }
+                startMode(mode, bubbleText: text, source: .typed, typedText: text, imageData: imageData)
+            }
+        }
     }
 
     private func resolveAudioQuestion(from audioText: String) -> String? {
@@ -566,46 +635,55 @@ class AppCoordinator: NSObject, ObservableObject {
         print("   No question detected, using raw audio text as fallback")
         return audioText
     }
-    
-    private func processQuestion(_ question: String, source: QuestionSource, screenContext: String?) {
-        if isDuplicateRecent(question) {
-            print("⚠️ Duplicate question detected, skipping: \(question)")
-            return
-        }
-        
-        print("❓ Question detected (\(source)): \(question)")
-        let item = qaManager.addQuestion(question, source: source, screenContext: screenContext)
-        Task { await getAnswer(for: item) }
+
+    private func startMode(
+        _ mode: PromptMode,
+        bubbleText: String,
+        source: QuestionSource,
+        detectedQuestion: String? = nil,
+        typedText: String? = nil,
+        imageData: Data? = nil
+    ) {
+        print("▶️ Running mode \(mode) (\(source)): \(bubbleText.prefix(50))")
+        let item = qaManager.addQuestion(bubbleText, source: source)
+        let payload = promptBuilder.build(
+            mode: mode,
+            transcript: transcriptBuffer,
+            qaHistory: qaManager.items,
+            detectedQuestion: detectedQuestion,
+            typedText: typedText
+        )
+        Task { await getAnswer(for: item, payload: payload, imageData: imageData) }
     }
-    
-    private func processScreenImage(_ imageData: Data) {
-        let prompt = "Solve the problem or answer the question shown in this image."
-        print("📺 Processing screen image with prompt")
-        let item = qaManager.addQuestion(prompt, source: .screen, screenContext: nil)
-        Task { await getAnswer(for: item, imageData: imageData) }
+
+    private func modelSupportsVision() -> Bool {
+        let modelId = selectedModelId.isEmpty
+            ? LLMModelCatalog.loadOrDefaultModelId(for: selectedProvider)
+            : selectedModelId
+        return LLMModelCatalog.supportsVision(provider: selectedProvider, modelId: modelId)
     }
-    
+
     private func isDuplicateRecent(_ question: String) -> Bool {
         let recentQuestions = qaManager.items.filter {
             abs($0.timestamp.timeIntervalSinceNow) < 30
         }
         return recentQuestions.contains { $0.question.lowercased() == question.lowercased() }
     }
-    
-    private func getAnswer(for item: QAItem, imageData: Data? = nil) async {
+
+    private func getAnswer(for item: QAItem, payload: PromptPayload, imageData: Data? = nil) async {
         guard isRunning, let llmService = llmService else {
             print("❌ No LLM service available or app stopped")
             qaManager.updateAnswer(for: item.id, answer: "Error: Missing API key or app stopped")
             return
         }
-        
+
         print("🔍 Requesting answer\(imageData != nil ? " with image" : ""): \(item.question.prefix(50))...")
-        
+
         do {
             var buffer = ""
             guard isRunning else { return }
             qaManager.updateAnswer(for: item.id, answer: "")
-            
+
             let onChunk: (String) -> Void = { chunk in
                 Task { @MainActor in
                     guard !chunk.isEmpty, self.isRunning else { return }
@@ -613,7 +691,7 @@ class AppCoordinator: NSObject, ObservableObject {
                     self.qaManager.updateAnswer(for: item.id, answer: buffer)
                 }
             }
-            
+
             let answer: String
             if let imageData = imageData {
                 let modelId = selectedModelId.isEmpty
@@ -622,9 +700,20 @@ class AppCoordinator: NSObject, ObservableObject {
                 guard LLMModelCatalog.supportsVision(provider: selectedProvider, modelId: modelId) else {
                     throw LLMError.imageInputNotSupportedByModel(modelId)
                 }
-                answer = try await llmService.streamAnswerWithImage(prompt: item.question, imageData: imageData, onChunk: onChunk)
+                answer = try await llmService.streamAnswerWithImage(
+                    userMessage: payload.userMessage,
+                    systemPrompt: payload.systemPrompt,
+                    imageData: imageData,
+                    options: payload.options,
+                    onChunk: onChunk
+                )
             } else {
-                answer = try await llmService.streamAnswer(item.question, screenContext: item.screenContext, onChunk: onChunk)
+                answer = try await llmService.streamAnswer(
+                    userMessage: payload.userMessage,
+                    systemPrompt: payload.systemPrompt,
+                    options: payload.options,
+                    onChunk: onChunk
+                )
             }
 
             print("✅ Answer received: \(answer.prefix(100))...")

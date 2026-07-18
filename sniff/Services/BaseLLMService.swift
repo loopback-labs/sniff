@@ -8,21 +8,19 @@ import Foundation
 class BaseLLMService: LLMService {
     let apiKey: String
     let baseURL: String
-    
-    static let defaultSystemPrompt = "You are a helpful assistant. Answer questions concisely and accurately using Markdown formatting. Use python code blocks for code, bullet points for lists, and keep responses brief."
-    
+
     init(apiKey: String, baseURL: String) {
         self.apiKey = apiKey
         self.baseURL = baseURL
     }
-    
+
     // MARK: - Abstract methods to override
-    
-    func buildTextRequestBody(question: String, systemPrompt: String) -> [String: Any] {
+
+    func buildTextRequestBody(userMessage: String, systemPrompt: String, options: LLMRequestOptions) -> [String: Any] {
         fatalError("Subclass must override")
     }
-    
-    func buildImageRequestBody(prompt: String, imageData: Data) -> [String: Any] {
+
+    func buildImageRequestBody(userMessage: String, systemPrompt: String, imageData: Data, options: LLMRequestOptions) -> [String: Any] {
         fatalError("Subclass must override")
     }
     
@@ -45,25 +43,23 @@ class BaseLLMService: LLMService {
     // MARK: - Shared implementation
     
     func streamAnswer(
-        _ question: String,
-        screenContext: String? = nil,
+        userMessage: String,
+        systemPrompt: String,
+        options: LLMRequestOptions,
         onChunk: @escaping (String) -> Void
     ) async throws -> String {
-        var systemPrompt = Self.defaultSystemPrompt
-        if let context = screenContext, !context.isEmpty {
-            systemPrompt += " Here is the current screen context: \(context)"
-        }
-        
-        let requestBody = buildTextRequestBody(question: question, systemPrompt: systemPrompt)
+        let requestBody = buildTextRequestBody(userMessage: userMessage, systemPrompt: systemPrompt, options: options)
         return try await performStreamRequest(body: requestBody, onChunk: onChunk)
     }
-    
+
     func streamAnswerWithImage(
-        prompt: String,
+        userMessage: String,
+        systemPrompt: String,
         imageData: Data,
+        options: LLMRequestOptions,
         onChunk: @escaping (String) -> Void
     ) async throws -> String {
-        let requestBody = buildImageRequestBody(prompt: prompt, imageData: imageData)
+        let requestBody = buildImageRequestBody(userMessage: userMessage, systemPrompt: systemPrompt, imageData: imageData, options: options)
         return try await performStreamRequest(body: requestBody, onChunk: onChunk)
     }
     

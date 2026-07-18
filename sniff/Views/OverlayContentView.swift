@@ -24,7 +24,10 @@ struct QAOverlayContent: View {
 // Pure content view - just the Q&A display logic
 struct QAContentView: View {
     @ObservedObject var qaManager: QAManager
-    
+    @EnvironmentObject var coordinator: AppCoordinator
+    @State private var draft: String = ""
+    @FocusState private var isComposerFocused: Bool
+
     var body: some View {
         VStack(spacing: 0) {
             if let currentItem = qaManager.currentItem {
@@ -33,11 +36,32 @@ struct QAContentView: View {
             } else {
                 emptyStateView
             }
-            
+
             if qaManager.items.count > 1 {
                 navigationControls
             }
+
+            composer
         }
+        .onChange(of: coordinator.askComposerFocusToken) { _, _ in
+            isComposerFocused = true
+        }
+        .onChange(of: isComposerFocused) { _, focused in
+            coordinator.isAskComposerFocused = focused
+        }
+    }
+
+    private var composer: some View {
+        TextField("Ask sniff…", text: $draft)
+            .textFieldStyle(.plain)
+            .font(.caption)
+            .padding(8)
+            .focused($isComposerFocused)
+            .onSubmit {
+                let text = draft
+                draft = ""
+                coordinator.runMode(.ask, typedText: text)
+            }
     }
     
     private var emptyStateView: some View {

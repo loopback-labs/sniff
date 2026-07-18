@@ -13,15 +13,12 @@ struct QAItem: Identifiable, Equatable {
     var answer: String?
     let source: QuestionSource
     let timestamp: Date
-    let screenContext: String?
-    
-    init(question: String, source: QuestionSource, screenContext: String? = nil) {
+
+    init(question: String, source: QuestionSource) {
         self.id = UUID()
         self.question = question
         self.answer = nil
         self.source = source
         self.timestamp = Date()
-        self.screenContext = screenContext
     }
-    
 }

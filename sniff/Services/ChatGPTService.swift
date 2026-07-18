@@ -16,21 +16,20 @@ final class ChatGPTService: LLMService {
   }
 
   func streamAnswer(
-    _ question: String,
-    screenContext: String?,
+    userMessage: String,
+    systemPrompt: String,
+    options: LLMRequestOptions,
     onChunk: @escaping (String) -> Void
   ) async throws -> String {
-    var systemPrompt = BaseLLMService.defaultSystemPrompt
-    if let context = screenContext, !context.isEmpty {
-      systemPrompt += " Here is the current screen context: \(context)"
-    }
-    let body = Self.buildChatBody(model: model, systemPrompt: systemPrompt, userText: question)
+    let body = Self.buildChatBody(model: model, systemPrompt: systemPrompt, userText: userMessage)
     return try await performWhamRequest(body: body, onChunk: onChunk)
   }
 
   func streamAnswerWithImage(
-    prompt: String,
+    userMessage: String,
+    systemPrompt: String,
     imageData: Data,
+    options: LLMRequestOptions,
     onChunk: @escaping (String) -> Void
   ) async throws -> String {
     let dataURL = "data:image/jpeg;base64,\(imageData.base64EncodedString())"
@@ -38,10 +37,11 @@ final class ChatGPTService: LLMService {
       "model": model,
       "stream": true,
       "messages": [
+        ["role": "system", "content": systemPrompt],
         [
           "role": "user",
           "content": [
-            ["type": "text", "text": prompt],
+            ["type": "text", "text": userMessage],
             ["type": "image_url", "image_url": ["url": dataURL]]
           ]
         ]

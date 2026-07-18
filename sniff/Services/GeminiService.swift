@@ -19,36 +19,39 @@ class GeminiService: BaseLLMService {
         URL(string: "\(baseURL)?key=\(apiKey)&alt=sse")
     }
 
-    override func buildTextRequestBody(question: String, systemPrompt: String) -> [String: Any] {
+    override func buildTextRequestBody(userMessage: String, systemPrompt: String, options: LLMRequestOptions) -> [String: Any] {
         [
             "system_instruction": ["parts": [["text": systemPrompt]]],
-            "contents": [["role": "user", "parts": [["text": question]]]],
-            "generationConfig": [
-                "maxOutputTokens": 4096,
-                "temperature": 0.2,
-                "thinkingConfig": ["thinkingLevel": "MEDIUM"]
-            ]
+            "contents": [["role": "user", "parts": [["text": userMessage]]]],
+            "generationConfig": generationConfig(for: options)
         ]
     }
 
-    override func buildImageRequestBody(prompt: String, imageData: Data) -> [String: Any] {
+    override func buildImageRequestBody(userMessage: String, systemPrompt: String, imageData: Data, options: LLMRequestOptions) -> [String: Any] {
         [
-            "system_instruction": ["parts": [["text": Self.defaultSystemPrompt]]],
+            "system_instruction": ["parts": [["text": systemPrompt]]],
             "contents": [
                 [
                     "role": "user",
                     "parts": [
                         ["inline_data": ["mime_type": "image/jpeg", "data": imageData.base64EncodedString()]],
-                        ["text": prompt]
+                        ["text": userMessage]
                     ]
                 ]
             ],
-            "generationConfig": [
-                "maxOutputTokens": 4096,
-                "temperature": 0.2,
-                "thinkingConfig": ["thinkingLevel": "MEDIUM"]
-            ]
+            "generationConfig": generationConfig(for: options)
         ]
+    }
+
+    private func generationConfig(for options: LLMRequestOptions) -> [String: Any] {
+        var config: [String: Any] = [
+            "maxOutputTokens": options.maxTokens,
+            "thinkingConfig": ["thinkingLevel": "MEDIUM"]
+        ]
+        if let temperature = options.temperature {
+            config["temperature"] = temperature
+        }
+        return config
     }
 
     override func parseStreamLine(_ line: String) -> String? {

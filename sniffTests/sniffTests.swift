@@ -364,12 +364,11 @@ struct sniffTests {
     @Test func qaManagerAddsScreenQuestionWithPrompt() {
         let manager = QAManager()
         let prompt = "Solve the problem or answer the question shown in this image."
-        
-        let item = manager.addQuestion(prompt, source: .screen, screenContext: nil)
-        
+
+        let item = manager.addQuestion(prompt, source: .screen)
+
         #expect(item.question == prompt)
         #expect(item.source == .screen)
-        #expect(item.screenContext == nil)
         #expect(manager.items.count == 1)
     }
     
@@ -388,18 +387,6 @@ struct sniffTests {
         #expect(screenItem.source == .screen)
         #expect(manualItem.source == .manual)
         #expect(secondManualItem.source == .manual)
-    }
-    
-    @Test func qaItemStoresScreenContext() {
-        let manager = QAManager()
-        
-        // Screen item without context (image-based)
-        let imageItem = manager.addQuestion("Solve this", source: .screen, screenContext: nil)
-        #expect(imageItem.screenContext == nil)
-        
-        // Manual item with text context
-        let textItem = manager.addQuestion("What is X?", source: .manual, screenContext: "Some context text")
-        #expect(textItem.screenContext == "Some context text")
     }
     
     // MARK: - LLM Service Base64 Encoding Tests
@@ -430,8 +417,7 @@ struct sniffTests {
     // MARK: - QuestionSource Enum Tests
     
     @Test func questionSourceEnumHasExpectedCases() {
-        let sources: [QuestionSource] = [.screen, .manual]
-        #expect(sources.count == 2)
+        #expect(QuestionSource.allCases.count == 6)
     }
     
     @Test func questionSourceUsedCorrectlyInQAItem() {
@@ -702,5 +688,96 @@ struct sniffTests {
         let service = ScreenCaptureService()
         let frame = await service.captureCurrentFrame()
         #expect(frame == nil)
+    }
+
+    // MARK: - PromptBuilder Tests
+
+    @Test func promptBuilderUsesEmptyTranscriptFallback() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer()
+
+        let payload = builder.build(mode: .sayNext, transcript: buffer, qaHistory: [])
+
+        #expect(payload.userMessage.contains("(nothing heard yet)"))
+        #expect(payload.userMessage.contains("What should I say next?"))
+        #expect(payload.options.maxTokens == 512)
+    }
+
+    @Test func promptBuilderMergesConsecutiveSameSpeakerTurns() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer()
+        appendAndRefresh(buffer, "Hello there. General question.", speaker: .you)
+
+        let payload = builder.build(mode: .answerQuestion, transcript: buffer, qaHistory: [], detectedQuestion: "What?")
+
+        #expect(payload.userMessage.contains("You: Hello there. General question."))
+        // Merged into a single "You:" line, not two separate ones.
+        #expect(payload.userMessage.components(separatedBy: "You:").count == 2)
+    }
+
+    @Test func promptBuilderTruncatesTranscriptToCharBudgetAtTurnBoundary() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer(displayWindowSeconds: 6000)
+        let now = Date()
+
+        // followUps has a 6000-char budget; generate well over that, oldest first.
+        for i in 0..<400 {
+            buffer.append(deltaText: "Filler sentence number \(i).", speaker: .you, at: now.addingTimeInterval(Double(i)))
+        }
+
+        let payload = builder.build(mode: .followUps, transcript: buffer, qaHistory: [])
+
+        #expect(!payload.userMessage.contains("Filler sentence number 0."))
+        #expect(payload.userMessage.contains("Filler sentence number 399."))
+        #expect(payload.userMessage.contains("Suggest follow-up questions."))
+    }
+
+    @Test func promptBuilderIncludesQAHistoryForAnswerQuestionAndAsk() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer()
+        var history: [QAItem] = []
+        var answered = QAItem(question: "Earlier question?", source: .manual)
+        answered.answer = "Earlier answer."
+        history.append(answered)
+
+        let payload = builder.build(mode: .answerQuestion, transcript: buffer, qaHistory: history, detectedQuestion: "New question?")
+
+        #expect(payload.userMessage.contains("Earlier in this session you already answered:"))
+        #expect(payload.userMessage.contains("Q: Earlier question?"))
+        #expect(payload.userMessage.contains("A: Earlier answer."))
+    }
+
+    @Test func promptBuilderExcludesUnansweredAndErroredItemsFromQAHistory() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer()
+        var history: [QAItem] = []
+        history.append(QAItem(question: "Unanswered?", source: .manual))
+        var errored = QAItem(question: "Failed?", source: .manual)
+        errored.answer = "Error: something went wrong"
+        history.append(errored)
+
+        let payload = builder.build(mode: .ask, transcript: buffer, qaHistory: history, typedText: "New ask")
+
+        #expect(!payload.userMessage.contains("Earlier in this session you already answered:"))
+    }
+
+    @Test func promptBuilderSolveScreenOmitsTranscriptSection() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer()
+        appendAndRefresh(buffer, "Some spoken context.", speaker: .you)
+
+        let payload = builder.build(mode: .solveScreen, transcript: buffer, qaHistory: [])
+
+        #expect(!payload.userMessage.contains("Recent conversation:"))
+        #expect(payload.userMessage == "Solve the coding problem shown in the screenshot.")
+    }
+
+    @Test func promptBuilderAskModeClosingLineIncludesTypedText() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer()
+
+        let payload = builder.build(mode: .ask, transcript: buffer, qaHistory: [], typedText: "What time is it?")
+
+        #expect(payload.userMessage.contains("Question: What time is it?"))
     }
 }
