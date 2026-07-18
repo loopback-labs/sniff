@@ -205,7 +205,7 @@ final class TranscriptBuffer: ObservableObject {
 
     /// Full session transcript from disk, speaker-labeled and tail-truncated to `maxCharacters`. Returns nil if unavailable.
     func fullSessionTranscript(maxCharacters: Int) -> String? {
-        guard let sessionURL, let raw = try? String(contentsOf: sessionURL, encoding: .utf8) else {
+        guard let sessionURL, let raw = readTail(of: sessionURL, approximateCharacterBudget: maxCharacters) else {
             return nil
         }
 
@@ -214,15 +214,26 @@ final class TranscriptBuffer: ObservableObject {
         }
         guard !lines.isEmpty else { return nil }
 
-        var result: [String] = []
-        var length = 0
-        for line in lines.reversed() {
-            let addedLength = line.count + (result.isEmpty ? 0 : 1)
-            if length + addedLength > maxCharacters { break }
-            result.append(line)
-            length += addedLength
+        return TranscriptionTextUtils.joinTailWithinBudget(lines, charBudget: maxCharacters)
+    }
+
+    /// Reads only the tail of `url` needed to cover `approximateCharacterBudget`, instead of loading
+    /// the whole (ever-growing) session file on every call. A generous byte multiplier accounts for
+    /// multi-byte UTF-8; any partial leading line from the seek point is dropped.
+    private func readTail(of url: URL, approximateCharacterBudget: Int) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let fileSize = try? handle.seekToEnd() else { return nil }
+
+        let byteBudget = UInt64(approximateCharacterBudget) * 4
+        let start = fileSize > byteBudget ? fileSize - byteBudget : 0
+        guard (try? handle.seek(toOffset: start)) != nil, let data = try? handle.readToEnd() else { return nil }
+
+        var text = String(decoding: data, as: UTF8.self)
+        if start > 0, let firstNewline = text.firstIndex(of: "\n") {
+            text = String(text[text.index(after: firstNewline)...])
         }
-        return result.reversed().joined(separator: "\n")
+        return text
     }
 
     private func formatPersistedLine(_ line: String) -> String? {

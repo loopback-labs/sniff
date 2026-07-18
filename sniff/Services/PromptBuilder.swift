@@ -133,19 +133,12 @@ struct PromptBuilder {
     }
     guard !candidates.isEmpty else { return "" }
 
-    var entries: [String] = []
-    var length = 0
-    for item in candidates.reversed() {
+    let entries = candidates.map { item -> String in
       let question = truncateHead(item.question, limit: qaHistoryCharBudget)
       let answer = truncateTail(item.answer ?? "", limit: qaAnswerCharBudget)
-      let entry = "Q: \(question)\nA: \(answer)"
-      let added = entry.count + (entries.isEmpty ? 0 : 1)
-      if !entries.isEmpty && length + added > qaHistorySectionBudget { break }
-      entries.append(entry)
-      length += added
-      if entries.count == qaHistoryMaxItems { break }
+      return "Q: \(question)\nA: \(answer)"
     }
-    return entries.reversed().joined(separator: "\n")
+    return TranscriptionTextUtils.joinTailWithinBudget(entries, charBudget: qaHistorySectionBudget, maxItems: qaHistoryMaxItems)
   }
 
   private func truncateHead(_ text: String, limit: Int) -> String {

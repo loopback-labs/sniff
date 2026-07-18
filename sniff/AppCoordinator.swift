@@ -121,16 +121,18 @@ class AppCoordinator: NSObject, ObservableObject {
     }
     
     func rebuildLLMService() {
-        let modelId = selectedModelId.isEmpty
-            ? LLMModelCatalog.loadOrDefaultModelId(for: selectedProvider)
-            : selectedModelId
-
         llmService = LLMServiceFactory.makeService(
             provider: selectedProvider,
-            modelId: modelId,
+            modelId: resolvedModelId(),
             keychain: keychainService,
             chatGPTAuth: chatGPTAuthManager
         )
+    }
+
+    private func resolvedModelId() -> String {
+        selectedModelId.isEmpty
+            ? LLMModelCatalog.loadOrDefaultModelId(for: selectedProvider)
+            : selectedModelId
     }
 
     private struct SpeechEngineRouting {
@@ -582,37 +584,40 @@ class AppCoordinator: NSObject, ObservableObject {
                 print("⚠️ Duplicate question detected, skipping: \(question)")
                 return
             }
-            startMode(mode, bubbleText: question, source: .manual, detectedQuestion: question)
+            startMode(mode, bubbleText: question, source: mode.questionSource, detectedQuestion: question)
 
         case .solveScreen:
             Task {
-                guard let imageData = await screenCaptureService.captureCurrentFrame() else {
+                guard let imageData = await captureImageIfNeeded(for: mode) else {
                     print("⚠️ No screenshot available")
                     return
                 }
                 print("   Screenshot available: \(imageData.count) bytes")
-                startMode(mode, bubbleText: mode.displayBubble ?? "", source: .screen, imageData: imageData)
+                startMode(mode, bubbleText: mode.displayBubble ?? "", source: mode.questionSource, imageDataTask: Task { imageData })
             }
 
-        case .sayNext:
-            startMode(mode, bubbleText: mode.displayBubble ?? "", source: .sayNext)
-
-        case .followUps:
-            startMode(mode, bubbleText: mode.displayBubble ?? "", source: .followUps)
-
-        case .recap:
-            startMode(mode, bubbleText: mode.displayBubble ?? "", source: .recap)
+        case .sayNext, .followUps, .recap:
+            startMode(mode, bubbleText: mode.displayBubble ?? "", source: mode.questionSource)
 
         case .ask:
             let text = (typedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return }
-            Task {
-                var imageData: Data?
-                if modelSupportsVision() {
-                    imageData = await screenCaptureService.captureCurrentFrame()
-                }
-                startMode(mode, bubbleText: text, source: .typed, typedText: text, imageData: imageData)
-            }
+            let imageDataTask = Task { await captureImageIfNeeded(for: mode) }
+            startMode(mode, bubbleText: text, source: mode.questionSource, typedText: text, imageDataTask: imageDataTask)
+        }
+    }
+
+    /// Resolves screenshot data according to the mode's `imageCapture` policy: unconditional capture
+    /// for modes that require one, vision-gated opportunistic capture for modes that use it if available.
+    private func captureImageIfNeeded(for mode: PromptMode) async -> Data? {
+        switch mode.imageCapture {
+        case .none:
+            return nil
+        case .required:
+            return await screenCaptureService.captureCurrentFrame()
+        case .whenVisionSupported:
+            guard modelSupportsVision() else { return nil }
+            return await screenCaptureService.captureCurrentFrame()
         }
     }
 
@@ -642,25 +647,27 @@ class AppCoordinator: NSObject, ObservableObject {
         source: QuestionSource,
         detectedQuestion: String? = nil,
         typedText: String? = nil,
-        imageData: Data? = nil
+        imageDataTask: Task<Data?, Never>? = nil
     ) {
         print("▶️ Running mode \(mode) (\(source)): \(bubbleText.prefix(50))")
         let item = qaManager.addQuestion(bubbleText, source: source)
+        // Built synchronously here so it runs concurrently with any in-flight screenshot capture
+        // rather than waiting for it first.
         let payload = promptBuilder.build(
             mode: mode,
             transcript: transcriptBuffer,
-            qaHistory: qaManager.items,
+            qaHistory: Array(qaManager.items.suffix(20)),
             detectedQuestion: detectedQuestion,
             typedText: typedText
         )
-        Task { await getAnswer(for: item, payload: payload, imageData: imageData) }
+        Task {
+            let imageData = await imageDataTask?.value
+            await getAnswer(for: item, payload: payload, imageData: imageData)
+        }
     }
 
     private func modelSupportsVision() -> Bool {
-        let modelId = selectedModelId.isEmpty
-            ? LLMModelCatalog.loadOrDefaultModelId(for: selectedProvider)
-            : selectedModelId
-        return LLMModelCatalog.supportsVision(provider: selectedProvider, modelId: modelId)
+        LLMModelCatalog.supportsVision(provider: selectedProvider, modelId: resolvedModelId())
     }
 
     private func isDuplicateRecent(_ question: String) -> Bool {
@@ -694,11 +701,8 @@ class AppCoordinator: NSObject, ObservableObject {
 
             let answer: String
             if let imageData = imageData {
-                let modelId = selectedModelId.isEmpty
-                    ? LLMModelCatalog.loadOrDefaultModelId(for: selectedProvider)
-                    : selectedModelId
-                guard LLMModelCatalog.supportsVision(provider: selectedProvider, modelId: modelId) else {
-                    throw LLMError.imageInputNotSupportedByModel(modelId)
+                guard modelSupportsVision() else {
+                    throw LLMError.imageInputNotSupportedByModel(resolvedModelId())
                 }
                 answer = try await llmService.streamAnswerWithImage(
                     userMessage: payload.userMessage,

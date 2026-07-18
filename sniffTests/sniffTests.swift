@@ -635,6 +635,23 @@ struct sniffTests {
         #expect(out.hasSuffix("."))
     }
 
+    @Test func joinTailWithinBudgetKeepsMostRecentLinesInOrder() {
+        let lines = ["first", "second", "third", "fourth"]
+        let result = TranscriptionTextUtils.joinTailWithinBudget(lines, charBudget: 13)
+        #expect(result == "third\nfourth")
+    }
+
+    @Test func joinTailWithinBudgetRespectsMaxItems() {
+        let lines = ["a", "b", "c", "d"]
+        let result = TranscriptionTextUtils.joinTailWithinBudget(lines, charBudget: 1000, maxItems: 2)
+        #expect(result == "c\nd")
+    }
+
+    @Test func joinTailWithinBudgetHandlesEmptyInput() {
+        #expect(TranscriptionTextUtils.joinTailWithinBudget([], charBudget: 100).isEmpty)
+        #expect(TranscriptionTextUtils.joinTailWithinBudget(["x"], charBudget: 0).isEmpty)
+    }
+
     @Test func sseDataPayloadStripsPrefix() {
         #expect(LLMStreamHelpers.sseDataPayload(from: "data: {\"x\":1}") == "{\"x\":1}")
         #expect(LLMStreamHelpers.sseDataPayload(from: "not data") == nil)

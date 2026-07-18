@@ -40,4 +40,21 @@ enum TranscriptionTextUtils {
     }
     return text
   }
+
+  /// Keeps as many of the most recent `lines` as fit within `charBudget` (and `maxItems`, if given),
+  /// preserving their original order.
+  static func joinTailWithinBudget(_ lines: [String], charBudget: Int, maxItems: Int = .max) -> String {
+    guard charBudget > 0, !lines.isEmpty else { return "" }
+
+    var kept: [String] = []
+    var length = 0
+    for line in lines.reversed() {
+      let added = line.count + (kept.isEmpty ? 0 : 1)
+      if !kept.isEmpty && length + added > charBudget { break }
+      kept.append(line)
+      length += added
+      if kept.count == maxItems { break }
+    }
+    return kept.reversed().joined(separator: "\n")
+  }
 }

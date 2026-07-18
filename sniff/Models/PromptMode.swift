@@ -77,6 +77,32 @@ enum PromptMode: CaseIterable {
     }
   }
 
+  /// The QAItem source tag recorded for items produced by this mode.
+  var questionSource: QuestionSource {
+    switch self {
+    case .answerQuestion: return .manual
+    case .solveScreen: return .screen
+    case .sayNext: return .sayNext
+    case .followUps: return .followUps
+    case .recap: return .recap
+    case .ask: return .typed
+    }
+  }
+
+  enum ImageCaptureRequirement {
+    case none
+    case required
+    case whenVisionSupported
+  }
+
+  var imageCapture: ImageCaptureRequirement {
+    switch self {
+    case .solveScreen: return .required
+    case .ask: return .whenVisionSupported
+    case .answerQuestion, .sayNext, .followUps, .recap: return .none
+    }
+  }
+
   var options: LLMRequestOptions {
     switch self {
     case .answerQuestion, .ask:
