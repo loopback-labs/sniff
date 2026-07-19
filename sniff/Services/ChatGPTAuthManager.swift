@@ -21,6 +21,7 @@ final class ChatGPTAuthManager: ObservableObject {
   private static let defaultPort: UInt16 = 1455
 
   private static let clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
+  static let originator = "codex_cli_rs"
 
   private let tokenFileURL: URL
 
@@ -46,21 +47,27 @@ final class ChatGPTAuthManager: ObservableObject {
     accountHint = nil
   }
 
-  func validAccessToken() async throws -> String {
+  struct ActiveAuth {
+    let accessToken: String
+    let accountId: String?
+  }
+
+  func validAuth() async throws -> ActiveAuth {
     guard var session = readSession() else {
       throw ChatGPTAuthError.notSignedIn
     }
     if let exp = session.expiresAt, exp > Date().addingTimeInterval(120) {
-      return session.accessToken
+      return ActiveAuth(accessToken: session.accessToken, accountId: session.accountId)
     }
     guard let refresh = session.refreshToken, !refresh.isEmpty else {
       throw ChatGPTAuthError.notSignedIn
     }
-    session = try await refreshTokens(refreshToken: refresh)
+    let previousAccountId = session.accountId
+    session = try await refreshTokens(refreshToken: refresh, previousAccountId: previousAccountId)
     try saveSession(session)
     isSignedIn = true
     accountHint = session.accountId
-    return session.accessToken
+    return ActiveAuth(accessToken: session.accessToken, accountId: session.accountId)
   }
 
   func signInWithBrowser() async throws {
@@ -71,7 +78,9 @@ final class ChatGPTAuthManager: ObservableObject {
     let state = Self.randomURLSafeString(byteCount: 32)
 
     let port = Self.defaultPort
-    let redirectURI = "http://127.0.0.1:\(port)\(Self.callbackPath)"
+    // Must use "localhost" (not 127.0.0.1) to match the redirect URI registered
+    // for the Codex OAuth client; a host mismatch makes the token exchange fail.
+    let redirectURI = "http://localhost:\(port)\(Self.callbackPath)"
 
     let server = try OAuthLoopbackServer(port: port, path: Self.callbackPath)
 
@@ -80,12 +89,13 @@ final class ChatGPTAuthManager: ObservableObject {
       URLQueryItem(name: "response_type", value: "code"),
       URLQueryItem(name: "client_id", value: clientId),
       URLQueryItem(name: "redirect_uri", value: redirectURI),
-      URLQueryItem(name: "scope", value: "openid offline_access"),
+      URLQueryItem(name: "scope", value: "openid profile email offline_access"),
       URLQueryItem(name: "state", value: state),
       URLQueryItem(name: "code_challenge", value: challenge),
       URLQueryItem(name: "code_challenge_method", value: "S256"),
+      URLQueryItem(name: "id_token_add_organizations", value: "true"),
       URLQueryItem(name: "codex_cli_simplified_flow", value: "true"),
-      URLQueryItem(name: "originator", value: "opencode")
+      URLQueryItem(name: "originator", value: Self.originator)
     ]
     guard let url = components.url else {
       throw ChatGPTAuthError.invalidAuthURL
@@ -180,7 +190,7 @@ final class ChatGPTAuthManager: ObservableObject {
     return try Self.decodeTokenResponse(data)
   }
 
-  private func refreshTokens(refreshToken: String) async throws -> StoredSession {
+  private func refreshTokens(refreshToken: String, previousAccountId: String?) async throws -> StoredSession {
     let clientId = Self.clientID
     var request = URLRequest(url: URL(string: Self.tokenURL)!)
     request.httpMethod = "POST"
@@ -196,10 +206,14 @@ final class ChatGPTAuthManager: ObservableObject {
       let msg = String(data: data, encoding: .utf8) ?? "refresh failed"
       throw ChatGPTAuthError.tokenExchangeFailed(msg)
     }
-    return try Self.decodeTokenResponse(data, previousRefresh: refreshToken)
+    return try Self.decodeTokenResponse(data, previousRefresh: refreshToken, previousAccountId: previousAccountId)
   }
 
-  private static func decodeTokenResponse(_ data: Data, previousRefresh: String? = nil) throws -> StoredSession {
+  private static func decodeTokenResponse(
+    _ data: Data,
+    previousRefresh: String? = nil,
+    previousAccountId: String? = nil
+  ) throws -> StoredSession {
     guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       throw ChatGPTAuthError.tokenExchangeFailed("Invalid JSON")
     }
@@ -213,14 +227,19 @@ final class ChatGPTAuthManager: ObservableObject {
     } else if let exp = json["expires_in"] as? Double {
       expiresAt = Date().addingTimeInterval(exp)
     }
-    let accountFromJWT = Self.chatgptAccountIdFromAccessTokenJWT(access)
+    // Prefer the id_token (populated with organization/account claims by
+    // id_token_add_organizations=true); fall back to the access-token JWT, then
+    // the body, then any previously stored account id (refresh omits id_token).
+    let idToken = json["id_token"] as? String
+    let accountFromIdToken = idToken.flatMap { Self.chatgptAccountIdFromJWT($0) }
+    let accountFromAccessToken = Self.chatgptAccountIdFromJWT(access)
     let accountFromBody = json["sub"] as? String ?? json["account_id"] as? String
-    let accountId = accountFromJWT ?? accountFromBody
+    let accountId = accountFromIdToken ?? accountFromAccessToken ?? accountFromBody ?? previousAccountId
     return StoredSession(accessToken: access, refreshToken: refresh, expiresAt: expiresAt, accountId: accountId)
   }
 
-  private static func chatgptAccountIdFromAccessTokenJWT(_ accessToken: String) -> String? {
-    let parts = accessToken.split(separator: ".")
+  private static func chatgptAccountIdFromJWT(_ token: String) -> String? {
+    let parts = token.split(separator: ".")
     guard parts.count >= 2 else { return nil }
     let payload = String(parts[1])
     guard let data = base64URLDecode(payload) else { return nil }

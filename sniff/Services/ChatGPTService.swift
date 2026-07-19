@@ -8,7 +8,9 @@ import Foundation
 final class ChatGPTService: LLMService {
   private let model: String
   private let authManager: ChatGPTAuthManager
-  private static let endpoint = URL(string: "https://chatgpt.com/backend-api/wham/responses")!
+  // ChatGPT subscription (Codex) backend. Uses the Responses API shape, not
+  // chat/completions. Must be paired with the Codex OAuth access token.
+  private static let endpoint = URL(string: "https://chatgpt.com/backend-api/codex/responses")!
 
   init(model: String, authManager: ChatGPTAuthManager) {
     self.model = model
@@ -21,8 +23,11 @@ final class ChatGPTService: LLMService {
     options: LLMRequestOptions,
     onChunk: @escaping (String) -> Void
   ) async throws -> String {
-    let body = Self.buildChatBody(model: model, systemPrompt: systemPrompt, userText: userMessage)
-    return try await performWhamRequest(body: body, onChunk: onChunk)
+    let content: [[String: Any]] = [
+      ["type": "input_text", "text": userMessage]
+    ]
+    let body = Self.buildResponsesBody(model: model, instructions: systemPrompt, content: content)
+    return try await performResponsesRequest(body: body, onChunk: onChunk)
   }
 
   func streamAnswerWithImage(
@@ -33,30 +38,27 @@ final class ChatGPTService: LLMService {
     onChunk: @escaping (String) -> Void
   ) async throws -> String {
     let dataURL = "data:image/jpeg;base64,\(imageData.base64EncodedString())"
-    let body: [String: Any] = [
-      "model": model,
-      "stream": true,
-      "messages": [
-        ["role": "system", "content": systemPrompt],
-        [
-          "role": "user",
-          "content": [
-            ["type": "text", "text": userMessage],
-            ["type": "image_url", "image_url": ["url": dataURL]]
-          ]
-        ]
-      ]
+    let content: [[String: Any]] = [
+      ["type": "input_text", "text": userMessage],
+      ["type": "input_image", "image_url": dataURL]
     ]
-    return try await performWhamRequest(body: body, onChunk: onChunk)
+    let body = Self.buildResponsesBody(model: model, instructions: systemPrompt, content: content)
+    return try await performResponsesRequest(body: body, onChunk: onChunk)
   }
 
-  private func performWhamRequest(body: [String: Any], onChunk: @escaping (String) -> Void) async throws -> String {
-    let token = try await authManager.validAccessToken()
+  private func performResponsesRequest(body: [String: Any], onChunk: @escaping (String) -> Void) async throws -> String {
+    let auth = try await authManager.validAuth()
     var request = URLRequest(url: Self.endpoint)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-    request.setValue("https://chatgpt.com", forHTTPHeaderField: "Origin")
+    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+    request.setValue("Bearer \(auth.accessToken)", forHTTPHeaderField: "Authorization")
+    request.setValue(ChatGPTAuthManager.originator, forHTTPHeaderField: "originator")
+    request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
+    request.setValue(UUID().uuidString, forHTTPHeaderField: "session_id")
+    if let accountId = auth.accountId, !accountId.isEmpty {
+      request.setValue(accountId, forHTTPHeaderField: "chatgpt-account-id")
+    }
     guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else {
       throw LLMError.serializationFailed
     }
@@ -72,7 +74,7 @@ final class ChatGPTService: LLMService {
 
     var collected = ""
     for try await line in bytes.lines {
-      guard let delta = Self.parseWhamSSELine(line) else { continue }
+      guard let delta = Self.parseResponsesSSELine(line) else { continue }
       if delta == "__DONE__" { break }
       if !delta.isEmpty {
         collected += delta
@@ -82,18 +84,19 @@ final class ChatGPTService: LLMService {
     return collected
   }
 
-  private static func buildChatBody(model: String, systemPrompt: String, userText: String) -> [String: Any] {
+  private static func buildResponsesBody(model: String, instructions: String, content: [[String: Any]]) -> [String: Any] {
     [
       "model": model,
+      "instructions": instructions,
+      "input": [
+        ["type": "message", "role": "user", "content": content]
+      ],
       "stream": true,
-      "messages": [
-        ["role": "system", "content": systemPrompt],
-        ["role": "user", "content": userText]
-      ]
+      "store": false
     ]
   }
 
-  private static func parseWhamSSELine(_ line: String) -> String? {
+  private static func parseResponsesSSELine(_ line: String) -> String? {
     guard let payload = LLMStreamHelpers.sseDataPayload(from: line) else { return nil }
     if payload == "[DONE]" { return "__DONE__" }
     guard let data = payload.data(using: .utf8),
@@ -101,23 +104,23 @@ final class ChatGPTService: LLMService {
           let json = obj as? [String: Any] else { return nil }
 
     if let type = json["type"] as? String {
-        if type.contains("output_text.delta") || type.contains("response.output_text.delta") {
-          if let delta = json["delta"] as? [String: Any], let text = delta["text"] as? String {
-            return text
-          }
-          if let text = json["text"] as? String { return text }
+      if type.contains("output_text.delta") {
+        // Responses API delivers the delta as a plain string.
+        if let text = json["delta"] as? String { return text }
+        if let delta = json["delta"] as? [String: Any], let text = delta["text"] as? String {
+          return text
         }
-      if type.contains("completed") || type.contains("done") {
+        if let text = json["text"] as? String { return text }
+      }
+      if type.contains("response.completed") || type.contains("response.failed") || type == "done" {
         return "__DONE__"
       }
     }
-    if let delta = json["delta"] as? [String: Any], let text = delta["text"] as? String {
-      return text
-    }
-    if let choices = json["choices"] as? [[String: Any]], let first = choices.first {
-      if let delta = first["delta"] as? [String: Any], let content = delta["content"] as? String {
-        return content
-      }
+    // Fallbacks for chat/completions-style frames, if the backend ever returns them.
+    if let delta = json["delta"] as? String { return delta }
+    if let choices = json["choices"] as? [[String: Any]], let first = choices.first,
+       let delta = first["delta"] as? [String: Any], let content = delta["content"] as? String {
+      return content
     }
     return nil
   }

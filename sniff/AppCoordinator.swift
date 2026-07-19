@@ -85,6 +85,9 @@ class AppCoordinator: NSObject, ObservableObject {
     }
     @Published var askComposerFocusToken = UUID()
     @Published var isAskComposerFocused = false
+    @Published var overlaysForceInteractive = false
+
+    private var clickThroughTimer: Timer?
     
     override init() {
         let savedProvider = UserDefaults.standard.string(forKey: UserDefaultsKeys.selectedLLMProvider) ?? LLMProvider.openai.rawValue
@@ -362,6 +365,7 @@ class AppCoordinator: NSObject, ObservableObject {
             createQAOverlayWindow()
             createTranscriptOverlayWindow()
             setupKeyboardShortcuts()
+            startClickThroughTracking()
             isRunning = true
         } catch {
             print("Failed to start services: \(error)")
@@ -384,7 +388,10 @@ class AppCoordinator: NSObject, ObservableObject {
         transcriptBuffer.stopSession()
 
         hotKeys.removeAll()
-        
+
+        clickThroughTimer?.invalidate()
+        clickThroughTimer = nil
+
         for window in [qaOverlayWindow, transcriptOverlayWindow] {
             window?.ignoresMouseEvents = true
             window?.contentView = nil
@@ -554,6 +561,35 @@ class AppCoordinator: NSObject, ObservableObject {
             self?.focusAskComposer()
         }
         hotKeys.append(askComposerHotKey)
+
+        let clickThroughHotKey = HotKey(key: .i, modifiers: [.command, .shift])
+        clickThroughHotKey.keyDownHandler = { [weak self] in
+            self?.overlaysForceInteractive.toggle()
+        }
+        hotKeys.append(clickThroughHotKey)
+    }
+
+    /// Starts a ~20 Hz cursor poll (no accessibility permission needed) that flips each overlay
+    /// window's click-through state based on whether the cursor is over a registered control.
+    private func startClickThroughTracking() {
+        clickThroughTimer?.invalidate()
+        clickThroughTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateClickThrough()
+            }
+        }
+    }
+
+    private func updateClickThrough() {
+        // Skip mid-gesture so an in-progress drag/resize never has the flag flip under it.
+        guard NSEvent.pressedMouseButtons == 0 else { return }
+        let mouseLocation = NSEvent.mouseLocation
+        for window in [qaOverlayWindow, transcriptOverlayWindow] {
+            (window as? OverlayWindow)?.refreshClickThrough(
+                mouseScreenPoint: mouseLocation,
+                forceInteractive: overlaysForceInteractive
+            )
+        }
     }
 
     func triggerScreenQuestion() {

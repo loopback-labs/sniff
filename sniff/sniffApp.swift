@@ -86,6 +86,11 @@ struct MenuBarView: View {
             }
             .disabled(!coordinator.isRunning)
 
+            Button("Overlay Clicks (⌘⇧I)") {
+                coordinator.overlaysForceInteractive.toggle()
+            }
+            .disabled(!coordinator.isRunning)
+
             Divider()
             
             Button("Settings...") {

@@ -38,11 +38,13 @@ struct QAContentView: View {
 
             if qaManager.items.count > 1 {
                 navigationControls
+                    .overlayInteractive()
             }
 
             Divider()
 
             composer
+                .overlayInteractive()
         }
         .onChange(of: coordinator.askComposerFocusToken) { _, _ in
             isComposerFocused = true
