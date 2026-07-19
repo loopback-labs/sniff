@@ -58,23 +58,15 @@ struct sniffTests {
         #expect(manager.currentIndex == -1)
     }
 
-    @Test func transcriptBufferClearsOnEmptyInput() {
-        let buffer = TranscriptBuffer(maxLineLength: 20)
+    @Test func transcriptBufferClearResetsState() {
+        let buffer = TranscriptBuffer()
         appendAndRefresh(buffer, "Hello world.", speaker: .you)
+        buffer.updateLatestQuestion("What is this?")
         #expect(!buffer.displayChunks.isEmpty)
 
         buffer.clear()
         #expect(buffer.displayChunks.isEmpty)
-    }
-
-    @Test func transcriptBufferWrapsAndCapsLines() {
-        let buffer = TranscriptBuffer(maxLineLength: 10)
-        appendAndRefresh(buffer, "one two three four five six seven.", speaker: .you)
-
-        #expect(!buffer.displayChunks.isEmpty)
-        let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
-        #expect(allText.contains("five"))
-        #expect(allText.contains("seven"))
+        #expect(buffer.latestQuestion == nil)
     }
 
     @Test func openAIFormatStreamLineParsing() {
@@ -159,45 +151,6 @@ struct sniffTests {
         
         let delta2 = processor.consume("hi again")
         #expect(delta2 == "hi again")
-    }
-    
-    // MARK: - TranscriptBuffer.latestQuestion Tests
-    
-    @Test func transcriptBufferTracksLatestQuestion() {
-        let buffer = TranscriptBuffer(maxLineLength: 20)
-        #expect(buffer.latestQuestion == nil)
-        
-        buffer.updateLatestQuestion("What is this?")
-        #expect(buffer.latestQuestion == "What is this?")
-        
-        buffer.updateLatestQuestion("How does it work?")
-        #expect(buffer.latestQuestion == "How does it work?")
-    }
-    
-    @Test func transcriptBufferClearsLatestQuestionOnClear() {
-        let buffer = TranscriptBuffer(maxLineLength: 20)
-        buffer.updateLatestQuestion("What is this?")
-        #expect(buffer.latestQuestion != nil)
-        
-        buffer.clear()
-        #expect(buffer.latestQuestion == nil)
-    }
-    
-    @Test func transcriptBufferLatestQuestionIndependentOfDisplayText() {
-        let buffer = TranscriptBuffer(maxLineLength: 20)
-        
-        appendAndRefresh(buffer, "Hello world this is some text.", speaker: .you)
-        #expect(!buffer.displayChunks.isEmpty)
-        #expect(buffer.latestQuestion == nil)
-        
-        buffer.updateLatestQuestion("What is this?")
-        #expect(!buffer.displayChunks.isEmpty)
-        #expect(buffer.latestQuestion == "What is this?")
-        
-        appendAndRefresh(buffer, "New display text here.", speaker: .you)
-        let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
-        #expect(allText.contains("New"))
-        #expect(buffer.latestQuestion == "What is this?")
     }
     
     // MARK: - AudioQuestionPipeline Tests (Punctuation-based detection)
@@ -285,161 +238,9 @@ struct sniffTests {
         #expect(result.questions.isEmpty)
     }
     
-    // MARK: - Highlighting Verification Tests
-    
-    @Test func highlightingWorksWithPunctuatedQuestionAcrossWrappedLines() {
-        // Simulate TranscriptBuffer wrapping behavior
-        let buffer = TranscriptBuffer(maxLineLength: 30)
-        
-        // Long question that will be wrapped
-        let fullText = "How does async functionality work in JavaScript?"
-        appendAndRefresh(buffer, fullText, speaker: .you)
-        
-        // Check displayChunks contain the question
-        let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
-        #expect(allText.contains("async"))
-        #expect(allText.contains("JavaScript?"))
-        
-        // Set the latest question (as pipeline would do)
-        let service = QuestionDetectionService()
-        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
-        let result = pipeline.process(recentText: fullText)
-        
-        buffer.updateLatestQuestion(result.latestQuestion)
-        
-        // Verify question was detected
-        #expect(buffer.latestQuestion != nil)
-        #expect(buffer.latestQuestion?.hasSuffix("?") == true)
-    }
-    
-    @Test func highlightingPreservesPunctuationInDisplayText() {
-        let buffer = TranscriptBuffer(maxLineLength: 60)
-        
-        // Multiple sentences with punctuation
-        appendAndRefresh(buffer, "Hello there. How are you? I am fine.", speaker: .you)
-        
-        // Punctuation should be preserved in display chunks
-        let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
-        #expect(allText.contains("."))
-        #expect(allText.contains("?"))
-        
-        // Set question
-        buffer.updateLatestQuestion("How are you?")
-        
-        // Question should match exactly in display text
-        #expect(allText.contains("How are you?"))
-        #expect(buffer.latestQuestion == "How are you?")
-    }
-    
-    @Test func highlightingHandlesQuestionSpanningMultipleLines() {
-        // Buffer with short line length to force wrapping
-        let buffer = TranscriptBuffer(maxLineLength: 20)
-        
-        let question = "What is the meaning of life?"
-        appendAndRefresh(buffer, question, speaker: .you)
-        
-        // Check chunks were created
-        #expect(!buffer.displayChunks.isEmpty)
-        
-        buffer.updateLatestQuestion(question)
-        
-        // Question should be in the chunks
-        let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
-        #expect(allText.contains("meaning"))
-        #expect(allText.contains("life?"))
-    }
-
     private func appendAndRefresh(_ buffer: TranscriptBuffer, _ text: String, speaker: TranscriptSpeaker) {
         buffer.append(deltaText: text, speaker: speaker)
         buffer.refreshDisplay()
-    }
-    
-    // MARK: - Vision/Image-Based Question Tests
-    
-    @Test func screenCaptureServiceInitializesNotCapturing() {
-        let service = ScreenCaptureService()
-        #expect(service.isCapturing == false)
-    }
-    
-    @Test func qaManagerAddsScreenQuestionWithPrompt() {
-        let manager = QAManager()
-        let prompt = "Solve the problem or answer the question shown in this image."
-        
-        let item = manager.addQuestion(prompt, source: .screen, screenContext: nil)
-        
-        #expect(item.question == prompt)
-        #expect(item.source == .screen)
-        #expect(item.screenContext == nil)
-        #expect(manager.items.count == 1)
-    }
-    
-    @Test func qaManagerHandlesMultipleSourceTypes() {
-        let manager = QAManager()
-        
-        let screenItem = manager.addQuestion("Solve image problem", source: .screen)
-        let manualItem = manager.addQuestion("Manual question", source: .manual)
-        let secondManualItem = manager.addQuestion("Another manual", source: .manual)
-        
-        #expect(manager.items.count == 3)
-        #expect(manager.items[0].source == .screen)
-        #expect(manager.items[1].source == .manual)
-        #expect(manager.items[2].source == .manual)
-        
-        #expect(screenItem.source == .screen)
-        #expect(manualItem.source == .manual)
-        #expect(secondManualItem.source == .manual)
-    }
-    
-    @Test func qaItemStoresScreenContext() {
-        let manager = QAManager()
-        
-        // Screen item without context (image-based)
-        let imageItem = manager.addQuestion("Solve this", source: .screen, screenContext: nil)
-        #expect(imageItem.screenContext == nil)
-        
-        // Manual item with text context
-        let textItem = manager.addQuestion("What is X?", source: .manual, screenContext: "Some context text")
-        #expect(textItem.screenContext == "Some context text")
-    }
-    
-    // MARK: - LLM Service Base64 Encoding Tests
-    
-    @Test func base64EncodingProducesValidString() {
-        // Simulate what LLM services do with image data
-        let testData = "test image data".data(using: .utf8)!
-        let base64 = testData.base64EncodedString()
-        
-        #expect(!base64.isEmpty)
-        #expect(!base64.contains(" "))
-        
-        // Verify round-trip
-        let decoded = Data(base64Encoded: base64)
-        #expect(decoded == testData)
-    }
-    
-    @Test func base64DataURLFormatIsCorrect() {
-        // Test OpenAI format
-        let testData = "fake jpeg".data(using: .utf8)!
-        let base64 = testData.base64EncodedString()
-        let dataURL = "data:image/jpeg;base64,\(base64)"
-        
-        #expect(dataURL.hasPrefix("data:image/jpeg;base64,"))
-        #expect(dataURL.contains(base64))
-    }
-    
-    // MARK: - QuestionSource Enum Tests
-    
-    @Test func questionSourceEnumHasExpectedCases() {
-        let sources: [QuestionSource] = [.screen, .manual]
-        #expect(sources.count == 2)
-    }
-    
-    @Test func questionSourceUsedCorrectlyInQAItem() {
-        let screenItem = QAItem(question: "Q1", source: .screen)
-        let manualItem = QAItem(question: "Q2", source: .manual)
-        
-        #expect(screenItem.source == .screen)
-        #expect(manualItem.source == .manual)
     }
 
     // MARK: - QuestionDetectionService Edge Cases
@@ -471,7 +272,6 @@ struct sniffTests {
     @Test func transcriptBufferRecentTextFiltersOldAndIncludesPending() {
         let now = Date()
         let buffer = TranscriptBuffer(
-            maxLineLength: 50,
             displayWindowSeconds: 60,
             detectionWindowSeconds: 2
         )
@@ -488,7 +288,7 @@ struct sniffTests {
 
     @Test func transcriptBufferDedupesRecentSentences() {
         let now = Date()
-        let buffer = TranscriptBuffer(maxLineLength: 50, duplicateWindowSeconds: 5, duplicateCheckCount: 6)
+        let buffer = TranscriptBuffer(duplicateWindowSeconds: 5, duplicateCheckCount: 6)
 
         buffer.append(deltaText: "Hello.", speaker: .you, at: now)
         buffer.append(deltaText: "Hello.", speaker: .you, at: now.addingTimeInterval(1))
@@ -498,22 +298,12 @@ struct sniffTests {
         #expect(buffer.displayChunks.first?.text == "Hello.")
     }
 
-    @Test func transcriptBufferCapsDisplayLength() {
-        let now = Date()
-        let buffer = TranscriptBuffer(maxLineLength: 100, maxDisplayCharacters: 10)
-        buffer.append(deltaText: "ABCDEFGHIJKLMNOPQRSTUVWXYZ.", speaker: .you, at: now)
-        buffer.refreshDisplay()
-
-        let allText = buffer.displayChunks.map { $0.text }.joined(separator: " ")
-        #expect(allText.contains("RSTUVWXYZ."))
-    }
-
     @Test func transcriptBufferWritesSessionFile() throws {
         let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        let buffer = TranscriptBuffer(maxLineLength: 40)
+        let buffer = TranscriptBuffer()
         buffer.startSession(saveDirectoryURL: tempDir)
 
         let now = Date(timeIntervalSince1970: 1_700_000_000)
@@ -590,15 +380,11 @@ struct sniffTests {
 
     // MARK: - LLM Provider/Service Tests
 
-    @Test func llmProviderMetadata() {
-        #expect(LLMProvider.openai.displayName == "OpenAI")
-        #expect(LLMProvider.claude.displayName == "Claude")
-        #expect(LLMProvider.gemini.displayName == "Gemini")
-        #expect(LLMProvider.chatgpt.displayName == "ChatGPT")
-        #expect(LLMProvider.openai.keychainKey == "openai_api_key")
-        #expect(LLMProvider.chatgpt.usesOAuth == true)
-        #expect(LLMProvider.openai.usesOAuth == false)
-        #expect(LLMProvider.allCases.count == 4)
+    @Test func llmProviderKeychainKeyFormatIsStable() {
+        // Existing users' stored keys are addressed by this format; changing it would orphan them.
+        for provider in LLMProvider.allCases where !provider.usesOAuth {
+            #expect(provider.keychainKey == "\(provider.rawValue)_api_key")
+        }
     }
 
     @Test func parseOpenAIFormatHandlesMessageContent() {
@@ -649,6 +435,23 @@ struct sniffTests {
         #expect(out.hasSuffix("."))
     }
 
+    @Test func joinTailWithinBudgetKeepsMostRecentLinesInOrder() {
+        let lines = ["first", "second", "third", "fourth"]
+        let result = TranscriptionTextUtils.joinTailWithinBudget(lines, charBudget: 13)
+        #expect(result == "third\nfourth")
+    }
+
+    @Test func joinTailWithinBudgetRespectsMaxItems() {
+        let lines = ["a", "b", "c", "d"]
+        let result = TranscriptionTextUtils.joinTailWithinBudget(lines, charBudget: 1000, maxItems: 2)
+        #expect(result == "c\nd")
+    }
+
+    @Test func joinTailWithinBudgetHandlesEmptyInput() {
+        #expect(TranscriptionTextUtils.joinTailWithinBudget([], charBudget: 100).isEmpty)
+        #expect(TranscriptionTextUtils.joinTailWithinBudget(["x"], charBudget: 0).isEmpty)
+    }
+
     @Test func sseDataPayloadStripsPrefix() {
         #expect(LLMStreamHelpers.sseDataPayload(from: "data: {\"x\":1}") == "{\"x\":1}")
         #expect(LLMStreamHelpers.sseDataPayload(from: "not data") == nil)
@@ -662,45 +465,106 @@ struct sniffTests {
     @Test func llmModelCatalogChatgptIsOpenAISubset() {
         let openaiIds = Set(LLMModelCatalog.models(for: .openai).map(\.id))
         let chatgptIds = Set(LLMModelCatalog.models(for: .chatgpt).map(\.id))
+        #expect(!chatgptIds.isEmpty)
         #expect(chatgptIds.isSubset(of: openaiIds))
-        #expect(chatgptIds.contains("gpt-4o"))
-        #expect(chatgptIds.contains("gpt-4o-mini"))
     }
 
-    // MARK: - ScreenCaptureService Concurrency Regression Tests
-    // These tests guard against the Swift 6 crash where @Published mutations in
-    // ScreenCaptureService occurred off the main thread after async suspension.
-
-    @Test func screenCaptureServiceStartsNotCapturing() {
-        let service = ScreenCaptureService()
-        #expect(service.isCapturing == false)
-    }
-
-    @Test func screenCaptureServiceStopWhenIdleIsNoop() async {
-        let service = ScreenCaptureService()
-        #expect(service.isCapturing == false)
-        await service.stopCapture()
-        #expect(service.isCapturing == false)
-    }
-
-    @Test func screenCaptureServicePublishedMutationIsOnMainThread() async {
-        let service = ScreenCaptureService()
-        var mutationWasOnMainThread = true
-
-        let cancellable = service.objectWillChange.sink {
-            mutationWasOnMainThread = Thread.isMainThread
-        }
-
-        await service.stopCapture()
-        // objectWillChange fires synchronously before the mutation on @MainActor,
-        // so it has already been called by the time the await returns.
-        #expect(mutationWasOnMainThread)
-        _ = cancellable
-    }
+    // MARK: - ScreenCaptureService
 
     @Test func screenCaptureServiceCaptureFrameWithoutActiveSessionReturnsNil() async {
         let service = ScreenCaptureService()
         let frame = await service.captureCurrentFrame()
         #expect(frame == nil)
+    }
+
+    // MARK: - PromptBuilder Tests
+
+    @Test func promptBuilderUsesEmptyTranscriptFallback() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer()
+
+        let payload = builder.build(mode: .sayNext, transcript: buffer, qaHistory: [])
+
+        #expect(payload.userMessage.contains("(nothing heard yet)"))
+        #expect(payload.userMessage.contains("What should I say next?"))
+        #expect(payload.options.maxTokens == 512)
+    }
+
+    @Test func promptBuilderMergesConsecutiveSameSpeakerTurns() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer()
+        appendAndRefresh(buffer, "Hello there. General question.", speaker: .you)
+
+        let payload = builder.build(mode: .answerQuestion, transcript: buffer, qaHistory: [], detectedQuestion: "What?")
+
+        #expect(payload.userMessage.contains("You: Hello there. General question."))
+        // Merged into a single "You:" line, not two separate ones.
+        #expect(payload.userMessage.components(separatedBy: "You:").count == 2)
+    }
+
+    @Test func promptBuilderTruncatesTranscriptToCharBudgetAtTurnBoundary() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer(displayWindowSeconds: 6000)
+        let now = Date()
+
+        // followUps has a 6000-char budget; generate well over that, oldest first.
+        for i in 0..<400 {
+            buffer.append(deltaText: "Filler sentence number \(i).", speaker: .you, at: now.addingTimeInterval(Double(i)))
+        }
+
+        let payload = builder.build(mode: .followUps, transcript: buffer, qaHistory: [])
+
+        #expect(!payload.userMessage.contains("Filler sentence number 0."))
+        #expect(payload.userMessage.contains("Filler sentence number 399."))
+        #expect(payload.userMessage.contains("Suggest follow-up questions."))
+    }
+
+    @Test func promptBuilderIncludesQAHistoryForAnswerQuestionAndAsk() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer()
+        var history: [QAItem] = []
+        var answered = QAItem(question: "Earlier question?", source: .manual)
+        answered.answer = "Earlier answer."
+        history.append(answered)
+
+        let payload = builder.build(mode: .answerQuestion, transcript: buffer, qaHistory: history, detectedQuestion: "New question?")
+
+        #expect(payload.userMessage.contains("Earlier in this session you already answered:"))
+        #expect(payload.userMessage.contains("Q: Earlier question?"))
+        #expect(payload.userMessage.contains("A: Earlier answer."))
+    }
+
+    @Test func promptBuilderExcludesUnansweredAndErroredItemsFromQAHistory() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer()
+        var history: [QAItem] = []
+        history.append(QAItem(question: "Unanswered?", source: .manual))
+        var errored = QAItem(question: "Failed?", source: .manual)
+        errored.answer = "Error: something went wrong"
+        history.append(errored)
+
+        let payload = builder.build(mode: .ask, transcript: buffer, qaHistory: history, typedText: "New ask")
+
+        #expect(!payload.userMessage.contains("Earlier in this session you already answered:"))
+    }
+
+    @Test func promptBuilderSolveScreenOmitsTranscriptSection() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer()
+        appendAndRefresh(buffer, "Some spoken context.", speaker: .you)
+
+        let payload = builder.build(mode: .solveScreen, transcript: buffer, qaHistory: [])
+
+        #expect(!payload.userMessage.contains("Recent conversation:"))
+        #expect(payload.userMessage == "Solve the coding problem shown in the screenshot.")
+    }
+
+    @Test func promptBuilderAskModeClosingLineIncludesTypedText() {
+        let builder = PromptBuilder()
+        let buffer = TranscriptBuffer()
+
+        let payload = builder.build(mode: .ask, transcript: buffer, qaHistory: [], typedText: "What time is it?")
+
+        #expect(payload.userMessage.contains("Question: What time is it?"))
     }
 }

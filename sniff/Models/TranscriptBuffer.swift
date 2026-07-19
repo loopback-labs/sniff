@@ -39,10 +39,8 @@ final class TranscriptBuffer: ObservableObject {
     @Published private(set) var displayChunks: [TranscriptDisplayChunk] = []
     @Published private(set) var latestQuestion: String?
 
-    private let maxLineLength: Int
     private let displayWindowSeconds: TimeInterval
     private let detectionWindowSeconds: TimeInterval
-    private let maxDisplayCharacters: Int
     private let maxPendingCharacters: Int
     private let duplicateWindowSeconds: TimeInterval
     private let duplicateCheckCount: Int
@@ -57,18 +55,14 @@ final class TranscriptBuffer: ObservableObject {
     private let isoFormatter = ISO8601DateFormatter()
 
     init(
-        maxLineLength: Int = 60,
         displayWindowSeconds: TimeInterval = 600,
         detectionWindowSeconds: TimeInterval = 300,
-        maxDisplayCharacters: Int = 8000,
         maxPendingCharacters: Int = 3000,
         duplicateWindowSeconds: TimeInterval = 5,
         duplicateCheckCount: Int = 6
     ) {
-        self.maxLineLength = maxLineLength
         self.displayWindowSeconds = displayWindowSeconds
         self.detectionWindowSeconds = detectionWindowSeconds
-        self.maxDisplayCharacters = maxDisplayCharacters
         self.maxPendingCharacters = maxPendingCharacters
         self.duplicateWindowSeconds = duplicateWindowSeconds
         self.duplicateCheckCount = duplicateCheckCount
@@ -193,6 +187,64 @@ final class TranscriptBuffer: ObservableObject {
         pendingSpeaker = .you
     }
 
+    /// Completed chunks (already pruned to `displayWindowSeconds`) plus the pending partial utterance, oldest first.
+    func recentTurns() -> [(speaker: TranscriptSpeaker, text: String)] {
+        var turns = tailChunks.map { (speaker: $0.speaker, text: $0.text) }
+        let pending = pendingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !pending.isEmpty {
+            turns.append((speaker: pendingSpeaker, text: pending))
+        }
+        return turns
+    }
+
+    /// Full session transcript from disk, speaker-labeled and tail-truncated to `maxCharacters`. Returns nil if unavailable.
+    func fullSessionTranscript(maxCharacters: Int) -> String? {
+        guard let sessionURL, let raw = readTail(of: sessionURL, approximateCharacterBudget: maxCharacters) else {
+            return nil
+        }
+
+        let lines = raw.split(separator: "\n").compactMap { line -> String? in
+            formatPersistedLine(String(line))
+        }
+        guard !lines.isEmpty else { return nil }
+
+        return TranscriptionTextUtils.joinTailWithinBudget(lines, charBudget: maxCharacters)
+    }
+
+    /// Reads only the tail of `url` needed to cover `approximateCharacterBudget`, instead of loading
+    /// the whole (ever-growing) session file on every call. A generous byte multiplier accounts for
+    /// multi-byte UTF-8; any partial leading line from the seek point is dropped.
+    private func readTail(of url: URL, approximateCharacterBudget: Int) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let fileSize = try? handle.seekToEnd() else { return nil }
+
+        let byteBudget = UInt64(approximateCharacterBudget) * 4
+        let start = fileSize > byteBudget ? fileSize - byteBudget : 0
+        guard (try? handle.seek(toOffset: start)) != nil, let data = try? handle.readToEnd() else { return nil }
+
+        var text = String(decoding: data, as: UTF8.self)
+        if start > 0, let firstNewline = text.firstIndex(of: "\n") {
+            text = String(text[text.index(after: firstNewline)...])
+        }
+        return text
+    }
+
+    private func formatPersistedLine(_ line: String) -> String? {
+        guard let closingBracket = line.firstIndex(of: "]") else { return nil }
+        let afterTimestamp = line.index(after: closingBracket)
+        let remainder = line[afterTimestamp...].trimmingCharacters(in: .whitespaces)
+        if remainder.hasPrefix(TranscriptSpeaker.you.displayLabel) {
+            let text = remainder.dropFirst(TranscriptSpeaker.you.displayLabel.count).trimmingCharacters(in: .whitespaces)
+            return "You: \(text)"
+        }
+        if remainder.hasPrefix(TranscriptSpeaker.others.displayLabel) {
+            let text = remainder.dropFirst(TranscriptSpeaker.others.displayLabel.count).trimmingCharacters(in: .whitespaces)
+            return "Them: \(text)"
+        }
+        return nil
+    }
+
     private func pruneTail(now: Date) {
         let cutoff = now.addingTimeInterval(-displayWindowSeconds)
         if let firstIndex = tailChunks.firstIndex(where: { $0.timestamp >= cutoff }) {
@@ -204,27 +256,6 @@ final class TranscriptBuffer: ObservableObject {
             tailChunks.removeAll()
             chunkIDs.removeAll()
         }
-    }
-
-    private func buildTailText() -> String {
-        // UI includes pending partial speech; disk keeps completed chunks only.
-        var text = joinChunks(tailChunks)
-        let pending = pendingText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !pending.isEmpty {
-            if text.isEmpty {
-                text = pending
-            } else if needsSpaceBetween(text, pending) {
-                text.append(" ")
-                text.append(pending)
-            } else {
-                text.append(pending)
-            }
-        }
-        if text.count > maxDisplayCharacters {
-            let start = text.index(text.endIndex, offsetBy: -maxDisplayCharacters)
-            text = String(text[start...])
-        }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func joinChunks(_ chunks: [TranscriptChunk]) -> String {
@@ -246,33 +277,6 @@ final class TranscriptBuffer: ObservableObject {
     private func needsSpaceBetween(_ lhs: String, _ rhs: String) -> Bool {
         guard let last = lhs.last, let first = rhs.first else { return false }
         return !last.isWhitespace && !first.isWhitespace
-    }
-
-    private func wrap(text: String) -> [String] {
-        let words = text.split(whereSeparator: { $0.isWhitespace })
-        var lines: [String] = []
-        var current = ""
-
-        for wordSub in words {
-            let word = String(wordSub)
-            if current.isEmpty {
-                current = word
-                continue
-            }
-
-            if current.count + 1 + word.count <= maxLineLength {
-                current += " " + word
-            } else {
-                lines.append(current)
-                current = word
-            }
-        }
-
-        if !current.isEmpty {
-            lines.append(current)
-        }
-
-        return lines
     }
 
     private func extractCompleteSentences(from text: String) -> (sentences: [String], remainder: String) {

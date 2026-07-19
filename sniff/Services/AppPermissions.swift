@@ -163,13 +163,6 @@ final class AppPermissions {
     }
   }
 
-  func promptAccessibility() {
-    // Same key as kAXTrustedCheckOptionPrompt; avoid global for Swift 6 concurrency.
-    let options: NSDictionary = ["AXTrustedCheckOptionPrompt": true]
-    _ = AXIsProcessTrustedWithOptions(options)
-    Task { await refreshAccurate() }
-  }
-
   func prompt(for kind: AppPermissionKind) {
     switch kind {
     case .screenRecording:

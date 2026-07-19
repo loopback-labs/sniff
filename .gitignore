@@ -1,14 +1,10 @@
-# Cursor IDE
+# AI files
 .cursor
 .cursorignore
-# codex
 .codex/
 AGENTS.md
-# claudecode
+.agents/
 .claude
-/CLAUDE.md
-
-.serena/
 
 # Xcode
 xcuserdata/

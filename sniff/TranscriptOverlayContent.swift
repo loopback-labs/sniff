@@ -9,36 +9,48 @@ struct TranscriptOverlayContentView: View {
             icon: "waveform",
             iconColor: .green
         ) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        if transcriptBuffer.displayChunks.isEmpty {
-                            Text("Listening...")
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding()
-                        } else {
-                            ForEach(transcriptBuffer.displayChunks) { chunk in
-                                ChatBubbleView(
-                                    chunk: chunk,
-                                    isHighlighted: isChunkHighlighted(chunk)
-                                )
-                                .opacity(chunk.isPending ? 0.6 : 1.0)
-                                .id(chunk.id)
+            VStack(spacing: 6) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 8) {
+                            if transcriptBuffer.displayChunks.isEmpty {
+                                VStack(spacing: 6) {
+                                    Image(systemName: "waveform.badge.mic")
+                                        .font(.title3)
+                                        .foregroundStyle(.tertiary)
+                                    Text("Listening…")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 20)
+                            } else {
+                                ForEach(transcriptBuffer.displayChunks) { chunk in
+                                    ChatBubbleView(
+                                        chunk: chunk,
+                                        isHighlighted: isChunkHighlighted(chunk)
+                                    )
+                                    .opacity(chunk.isPending ? 0.6 : 1.0)
+                                    .id(chunk.id)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                    }
+                    .frame(minHeight: 140)
+                    .onChange(of: transcriptBuffer.displayChunks) { _, _ in
+                        if let lastChunk = transcriptBuffer.displayChunks.last {
+                            withAnimation {
+                                proxy.scrollTo(lastChunk.id, anchor: .bottom)
                             }
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
                 }
-                .frame(minHeight: 140)
-                .onChange(of: transcriptBuffer.displayChunks) { _, _ in
-                    if let lastChunk = transcriptBuffer.displayChunks.last {
-                        withAnimation {
-                            proxy.scrollTo(lastChunk.id, anchor: .bottom)
-                        }
-                    }
-                }
+
+                Divider()
+
+                ShortcutsFooterView()
             }
         }
     }
@@ -46,6 +58,41 @@ struct TranscriptOverlayContentView: View {
     private func isChunkHighlighted(_ chunk: TranscriptDisplayChunk) -> Bool {
         guard let question = transcriptBuffer.latestQuestion else { return false }
         return chunk.text.localizedCaseInsensitiveContains(question)
+    }
+}
+
+private struct ShortcutsFooterView: View {
+    private static let shortcuts: [(keys: String, label: String)] = [
+        ("⌘⇧A", "Answer"),
+        ("⌘⇧Q", "Solve screen"),
+        ("⌘⇧S", "Say next"),
+        ("⌘⇧F", "Follow-ups"),
+        ("⌘⇧E", "Recap"),
+        ("⌘⇧K", "Ask"),
+        ("⌘⇧I", "Click-through"),
+    ]
+
+    var body: some View {
+        LazyVGrid(
+            columns: Array(repeating: GridItem(.flexible(), alignment: .leading), count: 3),
+            spacing: 4
+        ) {
+            ForEach(Self.shortcuts, id: \.keys) { shortcut in
+                HStack(spacing: 4) {
+                    Text(shortcut.keys)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 4))
+                    Text(shortcut.label)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(.horizontal, 4)
     }
 }
 
@@ -79,11 +126,12 @@ struct ChatBubbleView: View {
         if isHighlighted {
             return Color.yellow.opacity(0.7)
         }
+        // Slightly stronger fills so bubbles stay legible over the blurred material backdrop.
         switch chunk.speaker {
         case .you:
-            return Color.green.opacity(0.2)
+            return Color.green.opacity(0.28)
         case .others:
-            return Color.blue.opacity(0.15)
+            return Color.blue.opacity(0.22)
         }
     }
 

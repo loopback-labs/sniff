@@ -36,14 +36,17 @@ enum LLMProvider: String, CaseIterable, Identifiable {
 
 protocol LLMService {
     func streamAnswer(
-        _ question: String,
-        screenContext: String?,
+        userMessage: String,
+        systemPrompt: String,
+        options: LLMRequestOptions,
         onChunk: @escaping (String) -> Void
     ) async throws -> String
-    
+
     func streamAnswerWithImage(
-        prompt: String,
+        userMessage: String,
+        systemPrompt: String,
         imageData: Data,
+        options: LLMRequestOptions,
         onChunk: @escaping (String) -> Void
     ) async throws -> String
 }

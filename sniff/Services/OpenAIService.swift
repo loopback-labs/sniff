@@ -18,36 +18,43 @@ class OpenAIService: BaseLLMService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
     }
 
-    override func buildTextRequestBody(question: String, systemPrompt: String) -> [String: Any] {
-        [
-            "model": "gpt-4o",
-            "messages": [
-                ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": question]
-            ],
-            "max_tokens": 1024,
-            "temperature": 0.2,
-            "stream": true
-        ]
-    }
-
-    override func buildImageRequestBody(prompt: String, imageData: Data) -> [String: Any] {
-        let dataURL = "data:image/jpeg;base64,\(imageData.base64EncodedString())"
-        return [
+    override func buildTextRequestBody(userMessage: String, systemPrompt: String, options: LLMRequestOptions) -> [String: Any] {
+        var body: [String: Any] = [
             "model": model,
             "messages": [
+                ["role": "system", "content": systemPrompt],
+                ["role": "user", "content": userMessage]
+            ],
+            "max_tokens": options.maxTokens,
+            "stream": true
+        ]
+        if let temperature = options.temperature {
+            body["temperature"] = temperature
+        }
+        return body
+    }
+
+    override func buildImageRequestBody(userMessage: String, systemPrompt: String, imageData: Data, options: LLMRequestOptions) -> [String: Any] {
+        let dataURL = "data:image/jpeg;base64,\(imageData.base64EncodedString())"
+        var body: [String: Any] = [
+            "model": model,
+            "messages": [
+                ["role": "system", "content": systemPrompt],
                 [
                     "role": "user",
                     "content": [
-                        ["type": "text", "text": prompt],
+                        ["type": "text", "text": userMessage],
                         ["type": "image_url", "image_url": ["url": dataURL]]
                     ]
                 ]
             ],
-            "max_tokens": 1024,
-            "temperature": 0.2,
+            "max_tokens": options.maxTokens,
             "stream": true
         ]
+        if let temperature = options.temperature {
+            body["temperature"] = temperature
+        }
+        return body
     }
 
     override func parseStreamLine(_ line: String) -> String? {

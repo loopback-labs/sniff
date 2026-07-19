@@ -19,20 +19,25 @@ class ClaudeService: BaseLLMService {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
     }
 
-    override func buildTextRequestBody(question: String, systemPrompt: String) -> [String: Any] {
-        [
+    override func buildTextRequestBody(userMessage: String, systemPrompt: String, options: LLMRequestOptions) -> [String: Any] {
+        var body: [String: Any] = [
             "model": model,
-            "max_tokens": 1024,
+            "max_tokens": options.maxTokens,
             "system": systemPrompt,
-            "messages": [["role": "user", "content": question]],
+            "messages": [["role": "user", "content": userMessage]],
             "stream": true
         ]
+        if let temperature = options.temperature {
+            body["temperature"] = temperature
+        }
+        return body
     }
 
-    override func buildImageRequestBody(prompt: String, imageData: Data) -> [String: Any] {
-        [
+    override func buildImageRequestBody(userMessage: String, systemPrompt: String, imageData: Data, options: LLMRequestOptions) -> [String: Any] {
+        var body: [String: Any] = [
             "model": model,
-            "max_tokens": 1024,
+            "max_tokens": options.maxTokens,
+            "system": systemPrompt,
             "messages": [
                 [
                     "role": "user",
@@ -45,12 +50,16 @@ class ClaudeService: BaseLLMService {
                                 "data": imageData.base64EncodedString()
                             ]
                         ],
-                        ["type": "text", "text": prompt]
+                        ["type": "text", "text": userMessage]
                     ]
                 ]
             ],
             "stream": true
         ]
+        if let temperature = options.temperature {
+            body["temperature"] = temperature
+        }
+        return body
     }
 
     override func parseStreamLine(_ line: String) -> String? {

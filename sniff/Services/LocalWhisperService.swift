@@ -64,7 +64,6 @@ final class LocalWhisperService: ObservableObject {
     private let realtimeMinInitialSamples: Int = 16_000
     private let realtimeMinNewSamples: Int = 8_000
     private let realtimeWindowSamples: Int = 240_000
-    private let realtimeRecentActivitySamples: Int = 16_000
     private let realtimeSilenceRMSThreshold: Float = 0.0025
 
     func configure(modelID: String) {
@@ -219,14 +218,19 @@ final class LocalWhisperService: ObservableObject {
             }
 
             guard capturingInternal else { break }
+            // Skip the tick while the shared transcriber is busy, leaving all pointers/buffers
+            // untouched so the audio stays queued for the next tick instead of being dropped.
+            guard !transcriptionInFlight else { continue }
             let totalSamples = micSamples.count
             guard totalSamples >= realtimeMinInitialSamples else { continue }
 
             let unprocessedCount = totalSamples - micUnprocessedStart
             guard unprocessedCount >= realtimeMinNewSamples else { continue }
 
-            let recentTail = Array(micSamples.suffix(min(realtimeRecentActivitySamples, unprocessedCount)))
-            guard TranscriptionTextUtils.rootMeanSquare(of: recentTail) >= realtimeSilenceRMSThreshold else {
+            // Gate on the whole unprocessed range: a quiet last second must not discard
+            // speech accumulated earlier in the backlog.
+            let unprocessed = Array(micSamples[micUnprocessedStart...])
+            guard TranscriptionTextUtils.rootMeanSquare(of: unprocessed) >= realtimeSilenceRMSThreshold else {
                 micUnprocessedStart = totalSamples
                 continue
             }
@@ -268,14 +272,19 @@ final class LocalWhisperService: ObservableObject {
             }
 
             guard capturingInternal else { break }
+            // Skip the tick while the shared transcriber is busy, leaving all pointers/buffers
+            // untouched so the audio stays queued for the next tick instead of being dropped.
+            guard !transcriptionInFlight else { continue }
             let totalSamples = systemSamples.count
             guard totalSamples >= realtimeMinInitialSamples else { continue }
 
             let unprocessedCount = totalSamples - systemUnprocessedStart
             guard unprocessedCount >= realtimeMinNewSamples else { continue }
 
-            let recentTail = Array(systemSamples.suffix(min(realtimeRecentActivitySamples, unprocessedCount)))
-            guard TranscriptionTextUtils.rootMeanSquare(of: recentTail) >= realtimeSilenceRMSThreshold else {
+            // Gate on the whole unprocessed range: a quiet last second must not discard
+            // speech accumulated earlier in the backlog.
+            let unprocessed = Array(systemSamples[systemUnprocessedStart...])
+            guard TranscriptionTextUtils.rootMeanSquare(of: unprocessed) >= realtimeSilenceRMSThreshold else {
                 systemUnprocessedStart = totalSamples
                 continue
             }
@@ -337,7 +346,6 @@ final class LocalWhisperService: ObservableObject {
     }
 
     private func transcribe(samples: [Float], skipBeforeSeconds: Double = 0) async throws -> String {
-        guard !transcriptionInFlight else { return "" }
         guard let whisperKit else {
             throw LocalWhisperError.transcriptionFailed("WhisperKit not initialized")
         }
@@ -439,10 +447,6 @@ final class LocalWhisperService: ObservableObject {
     static func listDownloadedModels() -> [String] {
         let map = cleanedDownloadedModelMap()
         return map.keys.sorted()
-    }
-
-    static func isModelDownloaded(_ modelID: String) -> Bool {
-        cleanedDownloadedModelMap().keys.contains(normalizedModelID(from: modelID))
     }
 
     static func sizeStringForDownloadedModel(_ modelID: String) -> String? {

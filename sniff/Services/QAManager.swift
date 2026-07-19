@@ -28,8 +28,8 @@ class QAManager: ObservableObject {
         currentIndex < items.count - 1
     }
     
-    func addQuestion(_ question: String, source: QuestionSource, screenContext: String? = nil) -> QAItem {
-        let item = QAItem(question: question, source: source, screenContext: screenContext)
+    func addQuestion(_ question: String, source: QuestionSource) -> QAItem {
+        let item = QAItem(question: question, source: source)
         items.append(item)
         currentIndex = items.count - 1
         return item

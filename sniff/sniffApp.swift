@@ -63,7 +63,34 @@ struct MenuBarView: View {
                 coordinator.triggerAudioQuestion()
             }
             .disabled(!coordinator.isRunning)
-            
+
+            Divider()
+
+            Button("Say Next (⌘⇧S)") {
+                coordinator.runMode(.sayNext)
+            }
+            .disabled(!coordinator.isRunning)
+
+            Button("Follow-ups (⌘⇧F)") {
+                coordinator.runMode(.followUps)
+            }
+            .disabled(!coordinator.isRunning)
+
+            Button("Recap (⌘⇧E)") {
+                coordinator.runMode(.recap)
+            }
+            .disabled(!coordinator.isRunning)
+
+            Button("Ask... (⌘⇧K)") {
+                coordinator.focusAskComposer()
+            }
+            .disabled(!coordinator.isRunning)
+
+            Button("Overlay Clicks (⌘⇧I)") {
+                coordinator.overlaysForceInteractive.toggle()
+            }
+            .disabled(!coordinator.isRunning)
+
             Divider()
             
             Button("Settings...") {

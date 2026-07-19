@@ -1,8 +1,8 @@
 {
+  "$schema": "https://github.com/dyoshikawa/rulesync/releases/latest/download/config-schema.json",
   "targets": [
-    "cursor",
-    "codexcli",
-    "claudecode"
+    "claudecode",
+    "codexcli"
   ],
   "features": [
     "rules",
@@ -10,16 +10,19 @@
     "mcp",
     "commands",
     "subagents",
-    "skills"
+    "skills",
+    "hooks",
+    "permissions"
   ],
-  "baseDirs": [
+  "outputRoots": [
     "."
   ],
   "delete": true,
   "verbose": false,
+  "silent": false,
   "global": false,
   "simulateCommands": false,
   "simulateSubagents": false,
   "simulateSkills": false,
-  "modularMcp": true
+  "gitignoreTargetsOnly": true
 }
