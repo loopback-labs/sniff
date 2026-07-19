@@ -9,6 +9,8 @@ Open-source macOS menu bar app in the spirit of tools like Cluely: it captures s
 ## Features
 
 - **Question detection** in live transcription (highlighted in the transcript; use **⌘⇧A** to send to the LLM)
+- **Six prompt modes**, each with its own tuned instructions, transcript budget, and token/temperature settings: answer a detected question, solve an on-screen problem, suggest what to say next, suggest follow-up questions, recap the conversation, and ask a free-form typed question
+- **In-overlay ask composer** — type a question directly into the Q&A overlay (**⌘⇧K** to focus it) and get an answer grounded in the transcript and screen
 - **LLM providers:** OpenAI, Claude (Anthropic), Gemini (Google), and **ChatGPT** (session-based sign-in, not a stored API key)
 - **Per-provider model picker**, with a clear path to vision-capable models for screen questions
 - **Speech engines (on-device transcription):**
@@ -16,9 +18,9 @@ Open-source macOS menu bar app in the spirit of tools like Cluely: it captures s
   - **Parakeet** — FluidAudio Parakeet for microphone and system audio
 - **Dual-source transcript** — live mic + system audio with speaker labels (`[You]` / `[Others]`)
 - **Screen question capture** — screenshot sent to the selected provider when the model supports images
-- **Overlays** — draggable, resizable, click-through Q&A and transcript windows until hovered
-- **Manual triggers** — global hotkeys for screen/audio questions and capture on/off
-- **Q&A history** — navigate entries when the Q&A overlay is the key window
+- **Overlays** — draggable, resizable, click-through Q&A and transcript windows until hovered, with a force-interactive toggle hotkey
+- **Manual triggers** — global hotkeys for every prompt mode plus capture on/off
+- **Q&A history** — navigate entries via on-screen controls or hotkeys when the Q&A overlay is the key window
 - **Markdown answers** — rendered for readability (Textual)
 - **Secure storage** — API keys for OpenAI, Claude, and Gemini in the macOS Keychain; ChatGPT uses OAuth/session handling in-app
 - **Settings** — input device selection, optional inclusion of overlays in screenshots
@@ -96,6 +98,10 @@ Maintainers: in **Actions**, run workflow **Release macOS DMG** with branch **ma
 
 1. **⌘⇧Q** — screen question (uses current screenshot)  
 2. **⌘⇧A** — audio question (uses latest detected question from transcription, or falls back to detecting a question in recent text)
+3. **⌘⇧S** — suggest what to say next  
+4. **⌘⇧F** — suggest follow-up questions  
+5. **⌘⇧E** — recap the conversation so far  
+6. **⌘⇧K** — focus the Q&A overlay's ask composer to type a free-form question
 
 ### Keyboard shortcuts
 
@@ -104,22 +110,27 @@ Maintainers: in **Actions**, run workflow **Release macOS DMG** with branch **ma
 | ⌘⇧W | Start / stop capture |
 | ⌘⇧Q | Screen question |
 | ⌘⇧A | Audio question |
+| ⌘⇧S | What should I say next |
+| ⌘⇧F | Follow-up questions |
+| ⌘⇧E | Recap conversation |
+| ⌘⇧K | Focus ask composer |
+| ⌘⇧I | Force overlays interactive (toggle click-through) |
 | ⌘⇧R | Quit (stops capture then terminates) |
 | ⌥← / ⌥→ | Previous / next Q&A *(Q&A overlay must be key window)* |
 | ⌥↑ / ⌥↓ | First / last Q&A *(Q&A overlay must be key window)* |
 
 ### Overlay windows
 
-- **Q&A** — questions and streamed answers (default placement: top-right area)  
+- **Q&A** — questions and streamed answers, history navigation, and an ask composer text field for typed questions (default placement: top-right area)  
 - **Transcript** — live transcription with labels and question highlighting (top-left area)  
-- **Interaction** — click-through until you hover; then drag and resize  
+- **Interaction** — click-through until you hover; then drag and resize (or hold **⌘⇧I** to force both overlays interactive)  
 
 ## Architecture (high level)
 
 ```text
 sniff/
-├── Models/                 # LLMProvider, SpeechEngine, QAItem, catalogs, window config, etc.
-├── Services/               # Capture, transcription (WhisperKit / Parakeet), LLM clients, Q&A, keychain
+├── Models/                 # LLMProvider, SpeechEngine, QAItem, PromptMode, catalogs, window config, etc.
+├── Services/               # Capture, transcription (WhisperKit / Parakeet), LLM clients, PromptBuilder, Q&A, keychain
 ├── Views/                  # SwiftUI: settings, overlays, Q&A display, transcript UI
 ├── AppCoordinator.swift    # Orchestrates capture, hotkeys, providers, overlays
 ├── sniffApp.swift          # App entry, menu bar content
