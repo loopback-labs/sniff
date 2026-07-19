@@ -19,17 +19,16 @@ struct LLMModelOption: Identifiable, Hashable {
 
 enum LLMModelCatalog {
   private static let openAIModelOptions: [LLMModelOption] = [
-    LLMModelOption(id: "gpt-4o", supportsVision: true),
-    LLMModelOption(id: "gpt-4o-mini", supportsVision: true),
-    LLMModelOption(id: "gpt-4.1", supportsVision: true),
-    LLMModelOption(id: "gpt-4.1-mini", supportsVision: true),
+    // source: https://platform.openai.com/docs/models
+    LLMModelOption(id: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", supportsVision: true),
+    LLMModelOption(id: "gpt-5.6-terra", displayName: "GPT-5.6 Terra", supportsVision: true),
+    LLMModelOption(id: "gpt-5.6-luna", displayName: "GPT-5.6 Luna", supportsVision: true),
   ]
 
   private static let chatgptModelIds: Set<String> = [
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4.1",
-    "gpt-4.1-mini",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
   ]
 
   static func models(for provider: LLMProvider) -> [LLMModelOption] {
@@ -41,23 +40,24 @@ enum LLMModelCatalog {
     case .claude:
       return [
         // source: https://platform.claude.com/docs/en/about-claude/models/overview
-        LLMModelOption(id: "claude-sonnet-4-6", displayName: "Sonnet 4.6", supportsVision: true),
-        LLMModelOption(id: "claude-opus-4-6", displayName: "Opus 4.6", supportsVision: true),
+        LLMModelOption(id: "claude-sonnet-5", displayName: "Sonnet 5", supportsVision: true),
+        LLMModelOption(id: "claude-opus-4-8", displayName: "Opus 4.8", supportsVision: true),
         LLMModelOption(id: "claude-haiku-4-5-20251001", displayName: "Haiku 4.5", supportsVision: true),
+        LLMModelOption(id: "claude-fable-5", displayName: "Fable 5", supportsVision: true),
       ]
     case .gemini:
       return [
         // Source: https://ai.google.dev/gemini-api/docs/pricing
-        LLMModelOption(id: "gemini-3-flash-preview", displayName: "Gemini 3 Flash Preview", supportsVision: true),
-        LLMModelOption(id: "gemini-2.5-flash", displayName: "Gemini 2.5 Flash", supportsVision: true),
-        LLMModelOption(id: "gemini-3.1-flash-lite-preview", displayName: "Gemini 3.1 Flash-Lite Preview", supportsVision: true),
+        LLMModelOption(id: "gemini-3.5-flash", displayName: "Gemini 3.5 Flash", supportsVision: true),
+        LLMModelOption(id: "gemini-2.5-pro", displayName: "Gemini 2.5 Pro", supportsVision: true),
+        LLMModelOption(id: "gemini-3.1-flash-lite", displayName: "Gemini 3.1 Flash-Lite", supportsVision: true),
         LLMModelOption(id: "gemini-3.1-pro-preview", displayName: "Gemini 3.1 Pro Preview", supportsVision: true),
       ]
     }
   }
 
   static func defaultModelId(for provider: LLMProvider) -> String {
-    models(for: provider).first?.id ?? openAIModelOptions.first?.id ?? "gpt-4.1-mini"
+    models(for: provider).first?.id ?? openAIModelOptions.first?.id ?? "gpt-5.6-luna"
   }
 
   static func supportsVision(provider: LLMProvider, modelId: String) -> Bool {

@@ -13,10 +13,16 @@ struct TranscriptOverlayContentView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
                         if transcriptBuffer.displayChunks.isEmpty {
-                            Text("Listening...")
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding()
+                            VStack(spacing: 6) {
+                                Image(systemName: "waveform.badge.mic")
+                                    .font(.title3)
+                                    .foregroundStyle(.tertiary)
+                                Text("Listening…")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 20)
                         } else {
                             ForEach(transcriptBuffer.displayChunks) { chunk in
                                 ChatBubbleView(
@@ -79,11 +85,12 @@ struct ChatBubbleView: View {
         if isHighlighted {
             return Color.yellow.opacity(0.7)
         }
+        // Slightly stronger fills so bubbles stay legible over the blurred material backdrop.
         switch chunk.speaker {
         case .you:
-            return Color.green.opacity(0.2)
+            return Color.green.opacity(0.28)
         case .others:
-            return Color.blue.opacity(0.15)
+            return Color.blue.opacity(0.22)
         }
     }
 

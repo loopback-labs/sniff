@@ -12,7 +12,9 @@ struct StyledOverlayView<Content: View>: View {
     let iconColor: Color
     let headerTrailing: AnyView?
     @ViewBuilder let content: () -> Content
-    
+
+    private let cornerRadius: CGFloat = 14
+
     init(
         config: WindowConfiguration,
         icon: String,
@@ -26,7 +28,7 @@ struct StyledOverlayView<Content: View>: View {
         self.headerTrailing = headerTrailing
         self.content = content
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
@@ -34,7 +36,13 @@ struct StyledOverlayView<Content: View>: View {
         }
         .padding(config.padding)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color(NSColor.controlBackgroundColor).opacity(config.backgroundOpacity))
+        // Faint adaptive tint only — content behind the overlay must stay readable.
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.35))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(.white.opacity(0.15), lineWidth: 1)
+        }
         .overlay(alignment: .bottomTrailing) {
             if config.showResizeHandle {
                 ResizeHandleView()
@@ -42,14 +50,15 @@ struct StyledOverlayView<Content: View>: View {
             }
         }
     }
-    
+
     private var header: some View {
-        HStack {
+        HStack(spacing: 6) {
             DragHandleView()
             Image(systemName: icon)
+                .font(.caption)
                 .foregroundColor(iconColor)
             Text(config.name)
-                .font(.caption)
+                .font(.caption2.weight(.semibold))
                 .foregroundColor(.secondary)
             Spacer()
             if let trailing = headerTrailing {

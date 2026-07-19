@@ -746,12 +746,12 @@ class AppCoordinator: NSObject, ObservableObject {
         }
         
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 720),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        
+
         window.title = "Settings"
         let settingsView = SettingsView()
             .environmentObject(self)
