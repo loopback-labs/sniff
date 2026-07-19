@@ -68,10 +68,6 @@ enum LLMModelCatalog {
     models(for: provider).contains(where: { $0.id == modelId })
   }
 
-  static func storageKey(for provider: LLMProvider) -> String {
-    UserDefaultsKeys.llmModelId(for: provider)
-  }
-
   static func savedModelId(for provider: LLMProvider) -> String? {
     UserDefaults.standard.string(forKey: UserDefaultsKeys.llmModelId(for: provider))
   }

@@ -449,10 +449,6 @@ final class LocalWhisperService: ObservableObject {
         return map.keys.sorted()
     }
 
-    static func isModelDownloaded(_ modelID: String) -> Bool {
-        cleanedDownloadedModelMap().keys.contains(normalizedModelID(from: modelID))
-    }
-
     static func sizeStringForDownloadedModel(_ modelID: String) -> String? {
         let normalizedID = normalizedModelID(from: modelID)
         let map = cleanedDownloadedModelMap()

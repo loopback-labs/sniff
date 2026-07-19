@@ -39,10 +39,8 @@ final class TranscriptBuffer: ObservableObject {
     @Published private(set) var displayChunks: [TranscriptDisplayChunk] = []
     @Published private(set) var latestQuestion: String?
 
-    private let maxLineLength: Int
     private let displayWindowSeconds: TimeInterval
     private let detectionWindowSeconds: TimeInterval
-    private let maxDisplayCharacters: Int
     private let maxPendingCharacters: Int
     private let duplicateWindowSeconds: TimeInterval
     private let duplicateCheckCount: Int
@@ -57,18 +55,14 @@ final class TranscriptBuffer: ObservableObject {
     private let isoFormatter = ISO8601DateFormatter()
 
     init(
-        maxLineLength: Int = 60,
         displayWindowSeconds: TimeInterval = 600,
         detectionWindowSeconds: TimeInterval = 300,
-        maxDisplayCharacters: Int = 8000,
         maxPendingCharacters: Int = 3000,
         duplicateWindowSeconds: TimeInterval = 5,
         duplicateCheckCount: Int = 6
     ) {
-        self.maxLineLength = maxLineLength
         self.displayWindowSeconds = displayWindowSeconds
         self.detectionWindowSeconds = detectionWindowSeconds
-        self.maxDisplayCharacters = maxDisplayCharacters
         self.maxPendingCharacters = maxPendingCharacters
         self.duplicateWindowSeconds = duplicateWindowSeconds
         self.duplicateCheckCount = duplicateCheckCount
@@ -264,27 +258,6 @@ final class TranscriptBuffer: ObservableObject {
         }
     }
 
-    private func buildTailText() -> String {
-        // UI includes pending partial speech; disk keeps completed chunks only.
-        var text = joinChunks(tailChunks)
-        let pending = pendingText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !pending.isEmpty {
-            if text.isEmpty {
-                text = pending
-            } else if needsSpaceBetween(text, pending) {
-                text.append(" ")
-                text.append(pending)
-            } else {
-                text.append(pending)
-            }
-        }
-        if text.count > maxDisplayCharacters {
-            let start = text.index(text.endIndex, offsetBy: -maxDisplayCharacters)
-            text = String(text[start...])
-        }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     private func joinChunks(_ chunks: [TranscriptChunk]) -> String {
         var result = ""
         for chunk in chunks {
@@ -304,33 +277,6 @@ final class TranscriptBuffer: ObservableObject {
     private func needsSpaceBetween(_ lhs: String, _ rhs: String) -> Bool {
         guard let last = lhs.last, let first = rhs.first else { return false }
         return !last.isWhitespace && !first.isWhitespace
-    }
-
-    private func wrap(text: String) -> [String] {
-        let words = text.split(whereSeparator: { $0.isWhitespace })
-        var lines: [String] = []
-        var current = ""
-
-        for wordSub in words {
-            let word = String(wordSub)
-            if current.isEmpty {
-                current = word
-                continue
-            }
-
-            if current.count + 1 + word.count <= maxLineLength {
-                current += " " + word
-            } else {
-                lines.append(current)
-                current = word
-            }
-        }
-
-        if !current.isEmpty {
-            lines.append(current)
-        }
-
-        return lines
     }
 
     private func extractCompleteSentences(from text: String) -> (sentences: [String], remainder: String) {
