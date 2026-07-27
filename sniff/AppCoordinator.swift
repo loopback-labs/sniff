@@ -439,12 +439,9 @@ class AppCoordinator: NSObject, ObservableObject {
         window.isReleasedWhenClosed = false
         window.delegate = self
 
-        let root = PermissionOnboardingView(permissions: appPermissions)
-            .onChange(of: appPermissions.allGranted) { _, granted in
-                if granted {
-                    self.dismissPermissionOnboardingIfAllGranted()
-                }
-            }
+        let root = PermissionOnboardingView(permissions: appPermissions) { [weak self] in
+            self?.dismissPermissionOnboardingIfAllGranted()
+        }
         window.contentView = NSHostingView(rootView: root)
         window.center()
         window.orderFrontRegardless()

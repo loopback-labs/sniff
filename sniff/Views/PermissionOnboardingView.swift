@@ -7,6 +7,7 @@ import SwiftUI
 
 struct PermissionOnboardingView: View {
   @Bindable var permissions: AppPermissions
+  let onAllGranted: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -37,6 +38,9 @@ struct PermissionOnboardingView: View {
         Button("Continue") {
           Task {
             await permissions.refreshAccurate()
+            if permissions.allGranted {
+              onAllGranted()
+            }
           }
         }
         .keyboardShortcut(.defaultAction)
@@ -44,12 +48,21 @@ struct PermissionOnboardingView: View {
     }
     .padding(20)
     .frame(width: 460)
+    // Must live inside `body`: `onChange(of:)` evaluates its value eagerly at the
+    // call site, so attaching it to a view built outside a body freezes the
+    // compared value at its initial `false` and the change never fires.
+    .onChange(of: permissions.allGranted) { _, granted in
+      if granted {
+        onAllGranted()
+      }
+    }
     .task {
       await permissions.refreshAccurate()
       while !permissions.allGranted {
         try? await Task.sleep(for: .seconds(2))
         permissions.refreshQuick()
       }
+      onAllGranted()
     }
   }
 
