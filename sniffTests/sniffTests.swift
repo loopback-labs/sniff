@@ -60,7 +60,7 @@ struct sniffTests {
 
     @Test func transcriptBufferClearResetsState() {
         let buffer = TranscriptBuffer()
-        appendAndRefresh(buffer, "Hello world.", speaker: .you)
+        buffer.commitPending(text: "Hello world.", speaker: .you)
         buffer.updateLatestQuestion("What is this?")
         #expect(!buffer.displayChunks.isEmpty)
 
@@ -76,81 +76,6 @@ struct sniffTests {
 
         let done = BaseLLMService.parseOpenAIFormat("data: [DONE]")
         #expect(done == "[DONE]")
-    }
-    
-    // MARK: - Delta-based Question Detection Tests
-    
-    @Test func deltaDetectionExtractsOnlyNewQuestions() {
-        let detector = QuestionDetectionService()
-        let processor = TranscriptionDeltaProcessor()
-        
-        // First update - should detect question
-        let firstDelta = processor.consume("what is the weather")
-        let questions1 = detector.detectQuestions(in: firstDelta)
-        #expect(questions1.count == 1)
-        #expect(questions1.first?.lowercased().contains("weather") == true)
-        
-        // Second update - extending same question, no question words in delta
-        let secondDelta = processor.consume("what is the weather today")
-        let questions2 = detector.detectQuestions(in: secondDelta)
-        #expect(questions2.isEmpty)
-        
-        // Third update - new question, should detect
-        let thirdDelta = processor.consume("what is the weather today how does it work")
-        let questions3 = detector.detectQuestions(in: thirdDelta)
-        #expect(questions3.count == 1)
-        #expect(questions3.first?.lowercased().contains("how does") == true)
-    }
-    
-    @Test func deltaDetectionHandlesEmptyStrings() {
-        let detector = QuestionDetectionService()
-        let processor = TranscriptionDeltaProcessor()
-        
-        _ = processor.consume("something")
-        let emptyDelta = processor.consume("")
-        #expect(detector.detectQuestions(in: emptyDelta).isEmpty)
-        
-        let freshProcessor = TranscriptionDeltaProcessor()
-        let firstDelta = freshProcessor.consume("what is this")
-        #expect(detector.detectQuestions(in: firstDelta).count == 1)
-        
-        let emptyProcessor = TranscriptionDeltaProcessor()
-        let emptyDelta2 = emptyProcessor.consume("")
-        #expect(detector.detectQuestions(in: emptyDelta2).isEmpty)
-    }
-    
-    @Test func deltaDetectionHandlesRecognitionRestart() {
-        let detector = QuestionDetectionService()
-        let processor = TranscriptionDeltaProcessor()
-        
-        _ = processor.consume("what is the capital of france")
-        let restartDelta = processor.consume("what is the capital")
-        let questions = detector.detectQuestions(in: restartDelta)
-        #expect(questions.count == 1)
-    }
-    
-    @Test func transcriptionDeltaProcessorTracksSuffixUpdates() {
-        let processor = TranscriptionDeltaProcessor()
-        
-        let delta1 = processor.consume("hello world")
-        #expect(delta1 == "hello world")
-        
-        let delta2 = processor.consume("hello world how are you")
-        #expect(delta2 == "how are you")
-        
-        let delta3 = processor.consume("hello world how are you")
-        #expect(delta3.isEmpty)
-    }
-    
-    @Test func transcriptionDeltaProcessorResetsOnEmptyInput() {
-        let processor = TranscriptionDeltaProcessor()
-        
-        _ = processor.consume("hello world")
-        let delta1 = processor.consume("   ")
-        #expect(delta1.isEmpty)
-        
-        let delta2 = processor.consume("hi again")
-        #expect(delta2 == "hi again")
     }
     
     // MARK: - AudioQuestionPipeline Tests (Punctuation-based detection)
@@ -238,11 +163,6 @@ struct sniffTests {
         #expect(result.questions.isEmpty)
     }
     
-    private func appendAndRefresh(_ buffer: TranscriptBuffer, _ text: String, speaker: TranscriptSpeaker) {
-        buffer.append(deltaText: text, speaker: speaker)
-        buffer.refreshDisplay()
-    }
-
     // MARK: - QuestionDetectionService Edge Cases
 
     @Test func questionDetectionSkipsFallbackWhenPunctuationPresent() {
@@ -276,9 +196,9 @@ struct sniffTests {
             detectionWindowSeconds: 2
         )
 
-        buffer.append(deltaText: "Old sentence.", speaker: .you, at: now.addingTimeInterval(-10))
-        buffer.append(deltaText: "New sentence.", speaker: .you, at: now)
-        buffer.append(deltaText: "pending text", speaker: .you, at: now)
+        buffer.commitPending(text: "Old sentence.", speaker: .you, at: now.addingTimeInterval(-10))
+        buffer.commitPending(text: "New sentence.", speaker: .you, at: now)
+        buffer.updatePending(text: "pending text", speaker: .you)
 
         let recent = buffer.recentTextForDetection(now: now)
         #expect(!recent.contains("Old sentence."))
@@ -290,9 +210,8 @@ struct sniffTests {
         let now = Date()
         let buffer = TranscriptBuffer(duplicateWindowSeconds: 5, duplicateCheckCount: 6)
 
-        buffer.append(deltaText: "Hello.", speaker: .you, at: now)
-        buffer.append(deltaText: "Hello.", speaker: .you, at: now.addingTimeInterval(1))
-        buffer.refreshDisplay()
+        buffer.commitPending(text: "Hello.", speaker: .you, at: now)
+        buffer.commitPending(text: "Hello.", speaker: .you, at: now.addingTimeInterval(1))
 
         #expect(buffer.displayChunks.count == 1)
         #expect(buffer.displayChunks.first?.text == "Hello.")
@@ -307,8 +226,8 @@ struct sniffTests {
         buffer.startSession(saveDirectoryURL: tempDir)
 
         let now = Date(timeIntervalSince1970: 1_700_000_000)
-        buffer.append(deltaText: "Hello world.", speaker: .you, at: now)
-        buffer.append(deltaText: "Another line.", speaker: .others, at: now.addingTimeInterval(1))
+        buffer.commitPending(text: "Hello world.", speaker: .you, at: now)
+        buffer.commitPending(text: "Another line.", speaker: .others, at: now.addingTimeInterval(1))
         buffer.stopSession()
 
         let items = try FileManager.default.contentsOfDirectory(atPath: tempDir.path)
@@ -317,6 +236,71 @@ struct sniffTests {
         let contents = try String(contentsOf: fileURL)
         #expect(contents.contains("Hello world."))
         #expect(contents.contains("Another line."))
+    }
+
+    @Test func transcriptBufferUpdatePendingReplacesRatherThanAppends() {
+        let buffer = TranscriptBuffer()
+
+        buffer.updatePending(text: "the quick brown fox jumps", speaker: .you)
+        #expect(buffer.displayChunks.count == 1)
+        #expect(buffer.displayChunks.first?.text == "the quick brown fox jumps")
+        #expect(buffer.displayChunks.first?.isPending == true)
+
+        // A revision, including one shorter than the previous text, replaces wholesale.
+        buffer.updatePending(text: "the quick brown fox", speaker: .you)
+        #expect(buffer.displayChunks.count == 1)
+        #expect(buffer.displayChunks.first?.text == "the quick brown fox")
+    }
+
+    @Test func transcriptBufferPendingIsIsolatedPerSpeaker() {
+        let buffer = TranscriptBuffer()
+
+        buffer.updatePending(text: "mic in progress", speaker: .you)
+        buffer.updatePending(text: "system in progress", speaker: .others)
+
+        #expect(buffer.displayChunks.count == 2)
+        let texts = Set(buffer.displayChunks.map(\.text))
+        #expect(texts == ["mic in progress", "system in progress"])
+
+        // Revising one speaker's pending text must not disturb the other's.
+        buffer.updatePending(text: "mic revised", speaker: .you)
+        let othersChunk = buffer.displayChunks.first { $0.speaker == .others }
+        #expect(othersChunk?.text == "system in progress")
+    }
+
+    @Test func transcriptBufferOnlyCommitPersists() throws {
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let buffer = TranscriptBuffer()
+        buffer.startSession(saveDirectoryURL: tempDir)
+
+        buffer.updatePending(text: "still speaking, not final yet", speaker: .you)
+        buffer.updatePending(text: "still speaking, not final yet either", speaker: .you)
+        buffer.commitPending(text: "final utterance.", speaker: .you)
+        buffer.stopSession()
+
+        let items = try FileManager.default.contentsOfDirectory(atPath: tempDir.path)
+        #expect(items.count == 1)
+        let fileURL = tempDir.appendingPathComponent(items[0])
+        let contents = try String(contentsOf: fileURL)
+        #expect(!contents.contains("not final yet"))
+        #expect(contents.contains("final utterance."))
+        // Exactly one persisted line.
+        let lineCount = contents.split(separator: "\n").count
+        #expect(lineCount == 1)
+    }
+
+    @Test func transcriptBufferRecentTurnsIncludesBothSpeakersPending() {
+        let buffer = TranscriptBuffer()
+
+        buffer.updatePending(text: "you talking", speaker: .you)
+        buffer.updatePending(text: "them talking", speaker: .others)
+
+        let turns = buffer.recentTurns()
+        #expect(turns.contains { $0.speaker == .you && $0.text == "you talking" })
+        #expect(turns.contains { $0.speaker == .others && $0.text == "them talking" })
     }
 
     // MARK: - AudioQuestionPipeline Retention Tests
@@ -493,7 +477,7 @@ struct sniffTests {
     @Test func promptBuilderMergesConsecutiveSameSpeakerTurns() {
         let builder = PromptBuilder()
         let buffer = TranscriptBuffer()
-        appendAndRefresh(buffer, "Hello there. General question.", speaker: .you)
+        buffer.commitPending(text: "Hello there. General question.", speaker: .you)
 
         let payload = builder.build(mode: .answerQuestion, transcript: buffer, qaHistory: [], detectedQuestion: "What?")
 
@@ -509,7 +493,7 @@ struct sniffTests {
 
         // followUps has a 6000-char budget; generate well over that, oldest first.
         for i in 0..<400 {
-            buffer.append(deltaText: "Filler sentence number \(i).", speaker: .you, at: now.addingTimeInterval(Double(i)))
+            buffer.commitPending(text: "Filler sentence number \(i).", speaker: .you, at: now.addingTimeInterval(Double(i)))
         }
 
         let payload = builder.build(mode: .followUps, transcript: buffer, qaHistory: [])
@@ -551,7 +535,7 @@ struct sniffTests {
     @Test func promptBuilderSolveScreenOmitsTranscriptSection() {
         let builder = PromptBuilder()
         let buffer = TranscriptBuffer()
-        appendAndRefresh(buffer, "Some spoken context.", speaker: .you)
+        buffer.commitPending(text: "Some spoken context.", speaker: .you)
 
         let payload = builder.build(mode: .solveScreen, transcript: buffer, qaHistory: [])
 

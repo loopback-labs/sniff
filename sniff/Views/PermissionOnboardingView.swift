@@ -32,6 +32,8 @@ struct PermissionOnboardingView: View {
         }
       }
 
+      Spacer(minLength: 0)
+
       HStack {
         Spacer()
 
@@ -47,15 +49,7 @@ struct PermissionOnboardingView: View {
       }
     }
     .padding(20)
-    .frame(width: 460)
-    // Must live inside `body`: `onChange(of:)` evaluates its value eagerly at the
-    // call site, so attaching it to a view built outside a body freezes the
-    // compared value at its initial `false` and the change never fires.
-    .onChange(of: permissions.allGranted) { _, granted in
-      if granted {
-        onAllGranted()
-      }
-    }
+    .frame(width: 480, alignment: .top)
     .task {
       await permissions.refreshAccurate()
       while !permissions.allGranted {

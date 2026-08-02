@@ -7,8 +7,8 @@ import WhisperKit
 
 @MainActor
 final class LocalWhisperService: ObservableObject {
-    @Published var micTranscribedText: String = ""
-    @Published var systemTranscribedText: String = ""
+    @Published var micUpdate: TranscriptionUpdate = TranscriptionUpdate(text: "", isFinal: true)
+    @Published var systemUpdate: TranscriptionUpdate = TranscriptionUpdate(text: "", isFinal: true)
     @Published var isCapturing: Bool = false
 
     static let modelSelectionKey = UserDefaultsKeys.whisperModelId
@@ -30,41 +30,24 @@ final class LocalWhisperService: ObservableObject {
     private lazy var micSampleBridge = MicSampleBridge(label: "com.sniff.whisper.mic") { [weak self] samples in
         Task { @MainActor [weak self] in
             guard let self, self.capturingInternal else { return }
-            self.micSamples.append(contentsOf: samples)
-            if self.micSamples.count > self.realtimeWindowSamples {
-                let excess = self.micSamples.count - self.realtimeWindowSamples
-                self.micSamples.removeFirst(excess)
-                self.micUnprocessedStart = max(0, self.micUnprocessedStart - excess)
-            }
+            self.micVadSegmenter.enqueue(samples)
         }
     }
+
+    private let micVadSegmenter = VadSegmenter()
+    private let systemVadSegmenter = VadSegmenter()
+    private var micLastPartialTime: Date = .distantPast
+    private var systemLastPartialTime: Date = .distantPast
+    private let partialThrottleInterval: TimeInterval = 1.5
 
     private var configuredModelID: String = LocalWhisperService.defaultModelID()
     private var loadedModelVariant: String?
     private var whisperKit: WhisperKit?
 
     private var capturingInternal = false
+    // Single-WhisperKit mutex shared by mic + system: partials check-and-drop on contention,
+    // finals wait (see `waitUntilTranscriberFree`) so an utterance is never silently lost.
     private var transcriptionInFlight = false
-
-    private var micSamples: [Float] = []
-    private var systemSamples: [Float] = []
-    private var accumulatedMicText = ""
-    private var lastMicPublishedNormalized = ""
-    private var lastSystemPublishedNormalized = ""
-
-    private var micRealtimeTask: Task<Void, Never>?
-    private var systemRealtimeTask: Task<Void, Never>?
-
-    private let contextOverlapSamples: Int = 32_000
-    private var micUnprocessedStart: Int = 0
-    private var systemUnprocessedStart: Int = 0
-    private var accumulatedSystemText = ""
-
-    private let realtimeIntervalSeconds: TimeInterval = 1.0
-    private let realtimeMinInitialSamples: Int = 16_000
-    private let realtimeMinNewSamples: Int = 8_000
-    private let realtimeWindowSamples: Int = 240_000
-    private let realtimeSilenceRMSThreshold: Float = 0.0025
 
     func configure(modelID: String) {
         let normalized = Self.normalizedModelID(from: modelID)
@@ -75,71 +58,69 @@ final class LocalWhisperService: ObservableObject {
     func startCapture() async throws {
         guard !isCapturing else { return }
 
-        try await ensureWhisperKitReady()
-
         capturingInternal = true
-        micSamples.removeAll(keepingCapacity: true)
-        systemSamples.removeAll(keepingCapacity: true)
-        micUnprocessedStart = 0
-        systemUnprocessedStart = 0
-        transcriptionInFlight = false
+        micVadSegmenter.reset()
+        systemVadSegmenter.reset()
+        micLastPartialTime = .distantPast
+        systemLastPartialTime = .distantPast
 
-        try startMicCapture()
-        startRealtimeLoops()
-        isCapturing = true
+        do {
+            try await ensureWhisperKitReady()
+            wireSegmenters()
+            // Start both VAD segmenters (load their model, ready their streams) before installing
+            // the mic tap / accepting system audio, so no samples arrive before something is
+            // listening for them.
+            try await micVadSegmenter.start()
+            try await systemVadSegmenter.start()
+            try startMicCapture()
+            isCapturing = true
+        } catch {
+            capturingInternal = false
+            stopMicCapture()
+            throw error
+        }
     }
 
-    func stopCapture() {
-        Task { await stopAll(finalizeSystem: false) }
-    }
-
-    func stopAll(finalizeSystem: Bool) async {
+    func stopCapture(finalizeSystem: Bool) async {
         guard capturingInternal || isCapturing else { return }
 
         capturingInternal = false
         stopMicCapture()
 
-        micRealtimeTask?.cancel()
-        systemRealtimeTask?.cancel()
-        await micRealtimeTask?.value
-        await systemRealtimeTask?.value
-        micRealtimeTask = nil
-        systemRealtimeTask = nil
+        await micVadSegmenter.stop(finalizingRemainder: finalizeSystem)
+        await systemVadSegmenter.stop(finalizingRemainder: finalizeSystem)
 
-        if finalizeSystem {
-            await finalizeMicTranscriptionIfNeeded()
-            await finalizeSystemTranscriptionIfNeeded()
-        }
-
-        micSamples.removeAll(keepingCapacity: true)
-        systemSamples.removeAll(keepingCapacity: true)
-        micUnprocessedStart = 0
-        systemUnprocessedStart = 0
         transcriptionInFlight = false
         isCapturing = false
     }
 
     func appendSystemAudioFloats(_ floats: [Float]) {
         guard capturingInternal else { return }
-        systemSamples.append(contentsOf: floats)
-        if systemSamples.count > realtimeWindowSamples {
-            let excess = systemSamples.count - realtimeWindowSamples
-            systemSamples.removeFirst(excess)
-            systemUnprocessedStart = max(0, systemUnprocessedStart - excess)
-        }
+        systemVadSegmenter.enqueue(floats)
     }
 
     func reset() {
-        micTranscribedText = ""
-        systemTranscribedText = ""
-        accumulatedMicText = ""
-        accumulatedSystemText = ""
-        lastMicPublishedNormalized = ""
-        lastSystemPublishedNormalized = ""
-        micSamples.removeAll()
-        systemSamples.removeAll()
-        micUnprocessedStart = 0
-        systemUnprocessedStart = 0
+        micUpdate = TranscriptionUpdate(text: "", isFinal: true)
+        systemUpdate = TranscriptionUpdate(text: "", isFinal: true)
+        micVadSegmenter.reset()
+        systemVadSegmenter.reset()
+        micLastPartialTime = .distantPast
+        systemLastPartialTime = .distantPast
+    }
+
+    private func wireSegmenters() {
+        micVadSegmenter.onPartial = { [weak self] samples in
+            self?.handlePartial(samples: samples, speaker: .you)
+        }
+        micVadSegmenter.onSegment = { [weak self] samples in
+            await self?.transcribeFinal(samples: samples, speaker: .you)
+        }
+        systemVadSegmenter.onPartial = { [weak self] samples in
+            self?.handlePartial(samples: samples, speaker: .others)
+        }
+        systemVadSegmenter.onSegment = { [weak self] samples in
+            await self?.transcribeFinal(samples: samples, speaker: .others)
+        }
     }
 
     private func ensureWhisperKitReady() async throws {
@@ -195,157 +176,62 @@ final class LocalWhisperService: ObservableObject {
         audioEngine.stop()
     }
 
-    private func startRealtimeLoops() {
-        if micRealtimeTask == nil {
-            micRealtimeTask = Task { [weak self] in
-                await self?.runMicRealtimeLoop()
-            }
+    /// Fires on every VAD chunk while a segment is accumulating; cheap by design (throttle + busy
+    /// check, then hand off), matching `VadSegmenter.onPartial`'s non-blocking contract.
+    private func handlePartial(samples: [Float], speaker: TranscriptSpeaker) {
+        let now = Date()
+        let lastTime = speaker == .you ? micLastPartialTime : systemLastPartialTime
+        guard now.timeIntervalSince(lastTime) >= partialThrottleInterval else { return }
+        guard !transcriptionInFlight else { return }
+
+        switch speaker {
+        case .you: micLastPartialTime = now
+        case .others: systemLastPartialTime = now
         }
-        if systemRealtimeTask == nil {
-            systemRealtimeTask = Task { [weak self] in
-                await self?.runSystemRealtimeLoop()
-            }
-        }
-    }
 
-    private func runMicRealtimeLoop() async {
-        while !Task.isCancelled {
-            guard capturingInternal else { break }
-            do {
-                try await Task.sleep(nanoseconds: UInt64(realtimeIntervalSeconds * 1_000_000_000))
-            } catch {
-                break
-            }
-
-            guard capturingInternal else { break }
-            // Skip the tick while the shared transcriber is busy, leaving all pointers/buffers
-            // untouched so the audio stays queued for the next tick instead of being dropped.
-            guard !transcriptionInFlight else { continue }
-            let totalSamples = micSamples.count
-            guard totalSamples >= realtimeMinInitialSamples else { continue }
-
-            let unprocessedCount = totalSamples - micUnprocessedStart
-            guard unprocessedCount >= realtimeMinNewSamples else { continue }
-
-            // Gate on the whole unprocessed range: a quiet last second must not discard
-            // speech accumulated earlier in the backlog.
-            let unprocessed = Array(micSamples[micUnprocessedStart...])
-            guard TranscriptionTextUtils.rootMeanSquare(of: unprocessed) >= realtimeSilenceRMSThreshold else {
-                micUnprocessedStart = totalSamples
-                continue
-            }
-
-            let windowStart = max(0, micUnprocessedStart - contextOverlapSamples)
-            let skipBeforeSeconds = windowStart > 0 ? Double(contextOverlapSamples) / 16000.0 : 0
-            let tail = Array(micSamples[windowStart...])
-
-            micUnprocessedStart = totalSamples
-
-            if windowStart > 0 {
-                micSamples.removeFirst(windowStart)
-                micUnprocessedStart -= windowStart
-            }
-
-            do {
-                let text = try await transcribe(samples: tail, skipBeforeSeconds: skipBeforeSeconds)
-                guard !text.isEmpty else { continue }
-                let normalized = Self.normalize(text)
-                guard normalized != lastMicPublishedNormalized else { continue }
-                lastMicPublishedNormalized = normalized
-                accumulatedMicText = TranscriptionTextUtils.appendWithBoundarySmoothing(accumulatedMicText, text)
-                micTranscribedText = accumulatedMicText
-            } catch {
-                if !Task.isCancelled {
-                    print("⚠️ [WhisperKit] Realtime mic transcription failed: \(error.localizedDescription)")
-                }
-            }
+        Task { [weak self] in
+            await self?.transcribePartial(samples: samples, speaker: speaker)
         }
     }
 
-    private func runSystemRealtimeLoop() async {
-        while !Task.isCancelled {
-            guard capturingInternal else { break }
-            do {
-                try await Task.sleep(nanoseconds: UInt64(realtimeIntervalSeconds * 1_000_000_000))
-            } catch {
-                break
-            }
-
-            guard capturingInternal else { break }
-            // Skip the tick while the shared transcriber is busy, leaving all pointers/buffers
-            // untouched so the audio stays queued for the next tick instead of being dropped.
-            guard !transcriptionInFlight else { continue }
-            let totalSamples = systemSamples.count
-            guard totalSamples >= realtimeMinInitialSamples else { continue }
-
-            let unprocessedCount = totalSamples - systemUnprocessedStart
-            guard unprocessedCount >= realtimeMinNewSamples else { continue }
-
-            // Gate on the whole unprocessed range: a quiet last second must not discard
-            // speech accumulated earlier in the backlog.
-            let unprocessed = Array(systemSamples[systemUnprocessedStart...])
-            guard TranscriptionTextUtils.rootMeanSquare(of: unprocessed) >= realtimeSilenceRMSThreshold else {
-                systemUnprocessedStart = totalSamples
-                continue
-            }
-
-            let windowStart = max(0, systemUnprocessedStart - contextOverlapSamples)
-            let skipBeforeSeconds = windowStart > 0 ? Double(contextOverlapSamples) / 16000.0 : 0
-            let tail = Array(systemSamples[windowStart...])
-
-            systemUnprocessedStart = totalSamples
-
-            if windowStart > 0 {
-                systemSamples.removeFirst(windowStart)
-                systemUnprocessedStart -= windowStart
-            }
-
-            do {
-                let raw = try await transcribe(samples: tail, skipBeforeSeconds: skipBeforeSeconds)
-                guard !raw.isEmpty else { continue }
-                let text = TranscriptionTextUtils.normalizeSystemText(raw)
-                guard !text.isEmpty else { continue }
-                guard text != lastSystemPublishedNormalized else { continue }
-                lastSystemPublishedNormalized = text
-                accumulatedSystemText = TranscriptionTextUtils.appendWithBoundarySmoothing(accumulatedSystemText, text)
-                systemTranscribedText = accumulatedSystemText
-            } catch {
-                if !Task.isCancelled {
-                    print("⚠️ [WhisperKit] Realtime system transcription failed: \(error.localizedDescription)")
-                }
-            }
-        }
-    }
-
-    private func finalizeMicTranscriptionIfNeeded() async {
-        guard !micSamples.isEmpty else { return }
+    private func transcribePartial(samples: [Float], speaker: TranscriptSpeaker) async {
+        // Partials are disposable: re-check and drop on contention rather than queueing.
+        guard !transcriptionInFlight else { return }
         do {
-            let text = try await transcribe(samples: micSamples)
+            let text = try await transcribe(samples: samples)
             guard !text.isEmpty else { return }
-            let normalized = Self.normalize(text)
-            guard normalized != lastMicPublishedNormalized else { return }
-            accumulatedMicText = TranscriptionTextUtils.appendWithBoundarySmoothing(accumulatedMicText, text)
-            lastMicPublishedNormalized = normalized
-            micTranscribedText = accumulatedMicText
+            publish(text: text, speaker: speaker, isFinal: false)
         } catch {
-            print("⚠️ [WhisperKit] Final mic transcription failed: \(error.localizedDescription)")
+            print("⚠️ [WhisperKit] Partial transcription failed (\(speaker)): \(error.localizedDescription)")
         }
     }
 
-    private func finalizeSystemTranscriptionIfNeeded() async {
-        guard !systemSamples.isEmpty else { return }
+    private func transcribeFinal(samples: [Float], speaker: TranscriptSpeaker) async {
+        // Finals are never dropped: wait out any in-flight partial/final before running.
+        await waitUntilTranscriberFree()
         do {
-            let raw = try await transcribe(samples: systemSamples)
-            let text = TranscriptionTextUtils.normalizeSystemText(raw)
-            guard !text.isEmpty else { return }
-            accumulatedSystemText = TranscriptionTextUtils.appendWithBoundarySmoothing(accumulatedSystemText, text)
-            systemTranscribedText = accumulatedSystemText
+            let text = try await transcribe(samples: samples)
+            publish(text: text, speaker: speaker, isFinal: true)
         } catch {
-            print("⚠️ [WhisperKit] Final system transcription failed: \(error.localizedDescription)")
+            print("⚠️ [WhisperKit] Final transcription failed (\(speaker)): \(error.localizedDescription)")
         }
     }
 
-    private func transcribe(samples: [Float], skipBeforeSeconds: Double = 0) async throws -> String {
+    private func waitUntilTranscriberFree() async {
+        while transcriptionInFlight {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
+    private func publish(text: String, speaker: TranscriptSpeaker, isFinal: Bool) {
+        let update = TranscriptionUpdate(text: text, isFinal: isFinal)
+        switch speaker {
+        case .you: micUpdate = update
+        case .others: systemUpdate = update
+        }
+    }
+
+    private func transcribe(samples: [Float]) async throws -> String {
         guard let whisperKit else {
             throw LocalWhisperError.transcriptionFailed("WhisperKit not initialized")
         }
@@ -356,19 +242,10 @@ final class LocalWhisperService: ObservableObject {
         let options = DecodingOptions(
             task: .transcribe,
             language: "en",
-            withoutTimestamps: false,
+            withoutTimestamps: true,
             wordTimestamps: false
         )
         let results = try await whisperKit.transcribe(audioArray: samples, decodeOptions: options)
-
-        if skipBeforeSeconds > 0 {
-            return results
-                .flatMap { $0.segments }
-                .filter { Double($0.start) >= skipBeforeSeconds }
-                .map { $0.text }
-                .joined(separator: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
 
         return results
             .map(\.text)
@@ -376,16 +253,16 @@ final class LocalWhisperService: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func normalize(_ text: String) -> String {
-        text
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .split(whereSeparator: { $0.isWhitespace })
-            .joined(separator: " ")
+    // Pure, stateless helpers — `nonisolated` so plain value types like `SpeechModel` can use them
+    // without being dragged onto the main actor.
+    nonisolated static func defaultModelID() -> String {
+        "small"
     }
 
-    static func defaultModelID() -> String {
-        "small"
+    static func currentSelectedModelID() -> String {
+        let stored = UserDefaults.standard.string(forKey: modelSelectionKey) ?? ""
+        let normalized = normalizedModelID(from: stored)
+        return normalized.isEmpty ? defaultModelID() : normalized
     }
 
     static func modelStorageDirectory() -> URL {
@@ -405,7 +282,7 @@ final class LocalWhisperService: ObservableObject {
         }
     }
 
-    static func normalizedModelID(from value: String) -> String {
+    nonisolated static func normalizedModelID(from value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         var model = trimmed
@@ -424,7 +301,10 @@ final class LocalWhisperService: ObservableObject {
         return model
     }
 
-    static func downloadModel(named modelID: String) async throws -> URL {
+    static func downloadModel(
+        named modelID: String,
+        progressHandler: (@Sendable (Double, Int, Int) -> Void)? = nil
+    ) async throws -> URL {
         let normalizedID = normalizedModelID(from: modelID)
         guard !normalizedID.isEmpty else {
             throw LocalWhisperError.modelDownloadFailed("Invalid model ID")
@@ -438,10 +318,36 @@ final class LocalWhisperService: ObservableObject {
             variant: variant,
             downloadBase: base,
             useBackgroundSession: true,
-            from: "argmaxinc/whisperkit-coreml"
+            from: "argmaxinc/whisperkit-coreml",
+            progressCallback: progressHandler.map { handler in
+                // Unpack to plain scalars here: `Progress` is not Sendable, so it must not escape
+                // into the caller's (main-actor-hopping) closure.
+                { progress in
+                    handler(
+                        progress.fractionCompleted,
+                        Int(progress.completedUnitCount),
+                        Int(progress.totalUnitCount)
+                    )
+                }
+            }
         )
         rememberDownloadedModel(id: normalizedID, path: path.path)
         return path
+    }
+
+    /// Removes a downloaded model's files and forgets its path, so the row flips back to
+    /// "Download" and the disk space is actually reclaimed.
+    static func deleteModel(named modelID: String) throws {
+        let normalizedID = normalizedModelID(from: modelID)
+        var map = downloadedModelPathMap()
+        // Falls back to the on-disk location so a model discovered by scanning (rather than by
+        // this build having downloaded it) can still be removed.
+        let path = map[normalizedID] ?? variantDirectory(forModelID: normalizedID).path
+        if FileManager.default.fileExists(atPath: path) {
+            try FileManager.default.removeItem(at: URL(fileURLWithPath: path))
+        }
+        map[normalizedID] = nil
+        UserDefaults.standard.set(map, forKey: downloadedModelPathMapKey)
     }
 
     static func listDownloadedModels() -> [String] {
@@ -473,15 +379,54 @@ final class LocalWhisperService: ObservableObject {
         UserDefaults.standard.set(map, forKey: downloadedModelPathMapKey)
     }
 
+    /// CoreML bundles WhisperKit needs before a variant can actually load. Used to tell a finished
+    /// download apart from an interrupted one that left only some of the files behind.
+    private static let requiredModelArtifacts = [
+        "AudioEncoder.mlmodelc",
+        "MelSpectrogram.mlmodelc",
+        "TextDecoder.mlmodelc"
+    ]
+
+    /// Directory `WhisperKit.download` writes a variant to, given our `downloadBase`.
+    private static func variantDirectory(forModelID modelID: String) -> URL {
+        modelStorageDirectory()
+            .appendingPathComponent("models/argmaxinc/whisperkit-coreml", isDirectory: true)
+            .appendingPathComponent("openai_whisper-\(modelVariant(forModelID: modelID))", isDirectory: true)
+    }
+
+    private static func isCompleteModelDirectory(_ url: URL) -> Bool {
+        requiredModelArtifacts.allSatisfy {
+            FileManager.default.fileExists(atPath: url.appendingPathComponent($0).path)
+        }
+    }
+
+    /// Reconciles the remembered path map with what's actually on disk.
+    ///
+    /// The map alone isn't trustworthy: it's only written on a successful download in this
+    /// container, so models already present would otherwise report as missing and prompt a
+    /// multi-gigabyte re-download. Scanning also filters out interrupted downloads that left a
+    /// partial set of `.mlmodelc` bundles behind, which would fail at load time instead.
     private static func cleanedDownloadedModelMap() -> [String: String] {
         let existing = downloadedModelPathMap()
         var cleaned: [String: String] = [:]
+
         for (id, path) in existing {
+            let url = URL(fileURLWithPath: path)
             var isDir: ObjCBool = false
-            if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
+            if FileManager.default.fileExists(atPath: path, isDirectory: &isDir),
+               isDir.boolValue,
+               isCompleteModelDirectory(url) {
                 cleaned[id] = path
             }
         }
+
+        for name in availableModelNames where cleaned[name] == nil {
+            let url = variantDirectory(forModelID: name)
+            if isCompleteModelDirectory(url) {
+                cleaned[name] = url.path
+            }
+        }
+
         if cleaned != existing {
             UserDefaults.standard.set(cleaned, forKey: downloadedModelPathMapKey)
         }

@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     Task { @MainActor in
       await coordinator.appPermissions.refreshAccurate()
-      coordinator.dismissPermissionOnboardingIfAllGranted()
+      coordinator.dismissOnboardingIfComplete()
     }
   }
 }

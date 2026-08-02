@@ -5,92 +5,67 @@ import FluidAudio
 
 @MainActor
 final class ParakeetTranscriptionService: ObservableObject {
-    @Published var micTranscribedText: String = ""
-    @Published var systemTranscribedText: String = ""
+    @Published var micUpdate: TranscriptionUpdate = TranscriptionUpdate(text: "", isFinal: true)
+    @Published var systemUpdate: TranscriptionUpdate = TranscriptionUpdate(text: "", isFinal: true)
     @Published var isCapturing: Bool = false
 
     private let audioEngine = AVAudioEngine()
     private lazy var micSampleBridge = MicSampleBridge(label: "com.sniff.parakeet.mic") { [weak self] samples in
         Task { @MainActor [weak self] in
             guard let self, self.capturingInternal else { return }
-            self.enqueueVadChunks(from: samples)
+            self.micFeedContinuation?.yield(samples)
         }
     }
 
-    private let micChunkSamples: Int = 4096 // 256ms @ 16kHz
-    private let micSampleRate: Double = 16000
-    private let micProbabilityThreshold: Float = 0.5
-    private let minMicChunkDuration: TimeInterval = 0.8
-    private let maxMicChunkDuration: TimeInterval = 12.0
-
-    private var asrManager: AsrManager?
-    private var vadManager: VadManager?
-    private var asrModelVersion: AsrModelVersion = .v3
-
-    private var vadContinuation: AsyncStream<[Float]>.Continuation?
-    private var vadLoopTask: Task<Void, Never>?
+    // Parakeet EOU: cache-aware streaming encoder with a built-in, debounced end-of-utterance
+    // detector — this replaces the VadManager-based segmentation LocalWhisperService uses, since
+    // EOU's own boundary signal maps directly onto `isFinal`. See the streaming-ASR plan for why
+    // EOU was chosen over the Nemotron streaming family (no boundary callback, ~2s+ latency).
+    private var micStreamer: StreamingEouAsrManager?
+    private var systemStreamer: StreamingEouAsrManager?
+    private var chunkSize: StreamingChunkSize = .ms320
 
     private var capturingInternal: Bool = false
-    private var shouldFinalizeMic: Bool = false
 
-    private var collectingSpeech: Bool = false
-    private var currentMicSegmentSamples: [Float] = []
-    private var currentMicSegmentMaxProbability: Float = 0
-
-    private var accumulatedMicText: String = ""
-
-    // Buffer mic tap output to micChunkSamples-sized slices for VAD.
-    private var vadInputBuffer: [Float] = []
-
-    private var systemSamples: [Float] = []
-
-    // No streaming ASR path; periodically re-transcribe accumulated system audio.
-    private var systemRealtimeTranscriptionTask: Task<Void, Never>?
-    private var systemRealtimeLastSampleCount: Int = 0
-    private let systemRealtimeIntervalSeconds: TimeInterval = 1.0
-    private let systemRealtimeMinInitialSamples: Int = 16000 // ~1s @ 16kHz
-    private let systemRealtimeMinNewSamples: Int = 8000 // ~0.5s @ 16kHz
-    private let systemRealtimeWindowSamples: Int = 240_000 // ~15s @ 16kHz; cap work per realtime pass
-    private let systemRealtimeRecentActivitySamples: Int = 16_000 // ~1s tail for RMS / silence
-    private let systemRealtimeSilenceRMSThreshold: Float = 0.0025
-
-    private var lastSystemRealtimePublishedNormalized: String = ""
+    // Each source's chunks are fed to its streamer through a single ordered consumer loop
+    // (mirroring VadSegmenter's own AsyncStream pattern) rather than one Task per chunk, so
+    // `appendAudio` calls into the stateful streaming encoder can't arrive out of order.
+    private var micFeedContinuation: AsyncStream<[Float]>.Continuation?
+    private var micFeedTask: Task<Void, Never>?
+    private var systemFeedContinuation: AsyncStream<[Float]>.Continuation?
+    private var systemFeedTask: Task<Void, Never>?
 
     func reset() {
-        accumulatedMicText = ""
-        micTranscribedText = ""
-        systemTranscribedText = ""
-        systemSamples.removeAll()
-        vadInputBuffer.removeAll()
-        systemRealtimeTranscriptionTask?.cancel()
-        systemRealtimeTranscriptionTask = nil
-        systemRealtimeLastSampleCount = 0
-        lastSystemRealtimePublishedNormalized = ""
+        micUpdate = TranscriptionUpdate(text: "", isFinal: true)
+        systemUpdate = TranscriptionUpdate(text: "", isFinal: true)
+        let mic = micStreamer
+        let system = systemStreamer
+        Task {
+            await mic?.reset()
+            await system?.reset()
+        }
     }
 
     func configure(modelChoice: ParakeetModelChoice) {
-        let newVersion = modelChoice.asrModelVersion
-
-        guard self.asrModelVersion != newVersion else { return }
-        self.asrModelVersion = newVersion
-        self.asrManager = nil
+        let newChunkSize = modelChoice.streamingChunkSize
+        guard chunkSize != newChunkSize else { return }
+        chunkSize = newChunkSize
+        // Force re-creation with the new chunk size on next start; a different chunk size means a
+        // different model export, not just a config tweak on the existing manager.
+        micStreamer = nil
+        systemStreamer = nil
     }
 
     func startCapture() async throws {
         guard !isCapturing else { return }
 
         capturingInternal = true
-        shouldFinalizeMic = false
-        collectingSpeech = false
-        currentMicSegmentSamples.removeAll()
-        currentMicSegmentMaxProbability = 0
-        vadInputBuffer.removeAll()
 
         do {
             try await ensureManagersLoaded()
+            startFeedLoop(for: .you)
+            startFeedLoop(for: .others)
             try startMicCapture()
-            startVadLoopIfNeeded()
-            startSystemRealtimeTranscriptionLoop()
             isCapturing = true
         } catch {
             capturingInternal = false
@@ -103,61 +78,113 @@ final class ParakeetTranscriptionService: ObservableObject {
         guard capturingInternal || isCapturing else { return }
 
         capturingInternal = false
-        shouldFinalizeMic = finalizeSystem
-
         stopMicCapture()
 
-        systemRealtimeTranscriptionTask?.cancel()
-        await systemRealtimeTranscriptionTask?.value
-        systemRealtimeTranscriptionTask = nil
-
-        vadContinuation?.finish()
-        vadContinuation = nil
-
-        if !finalizeSystem {
-            vadLoopTask?.cancel()
-        }
-        await vadLoopTask?.value
-        vadLoopTask = nil
-
-        isCapturing = false
+        micFeedContinuation?.finish()
+        micFeedContinuation = nil
+        systemFeedContinuation?.finish()
+        systemFeedContinuation = nil
+        await micFeedTask?.value
+        await systemFeedTask?.value
+        micFeedTask = nil
+        systemFeedTask = nil
 
         if finalizeSystem {
-            await transcribeSystemAudio()
+            await finalize(micStreamer, speaker: .you)
+            await finalize(systemStreamer, speaker: .others)
         }
 
-        systemSamples.removeAll()
-        if !finalizeSystem {
-            accumulatedMicText = ""
-            lastSystemRealtimePublishedNormalized = ""
-            micTranscribedText = ""
-            systemTranscribedText = ""
-        }
+        isCapturing = false
     }
 
     func appendSystemAudioFloats(_ floats: [Float]) {
         guard capturingInternal else { return }
-        systemSamples.append(contentsOf: floats)
+        systemFeedContinuation?.yield(floats)
     }
 
     private func ensureManagersLoaded() async throws {
-        if asrManager == nil {
-            let models = try await AsrModels.downloadAndLoad(version: asrModelVersion)
-            let asr = AsrManager(config: .default)
-            try await asr.loadModels(models)
-            asrManager = asr
+        if micStreamer == nil {
+            micStreamer = try await makeStreamingManager(speaker: .you)
         }
-
-        if vadManager == nil {
-            let vad = try await VadManager(config: VadConfig(defaultThreshold: micProbabilityThreshold))
-            vadManager = vad
+        if systemStreamer == nil {
+            systemStreamer = try await makeStreamingManager(speaker: .others)
         }
     }
 
-    private func transcribeParakeetChunk(_ samples: [Float], asrManager: AsrManager) async throws -> ASRResult {
-        let layers = await asrManager.decoderLayerCount
-        var decoderState = TdtDecoderState.make(decoderLayers: layers)
-        return try await asrManager.transcribe(samples, decoderState: &decoderState)
+    private func makeStreamingManager(speaker: TranscriptSpeaker) async throws -> StreamingEouAsrManager {
+        let manager = StreamingEouAsrManager(chunkSize: chunkSize)
+
+        await manager.setPartialCallback { [weak self] text in
+            Task { @MainActor [weak self] in
+                self?.publish(text: text, speaker: speaker, isFinal: false)
+            }
+        }
+        await manager.setEouCallback { [weak self] text in
+            Task { @MainActor [weak self] in
+                self?.publish(text: text, speaker: speaker, isFinal: true)
+                // The manager only fires EOU once per session until reset — clear its decoder/EOU
+                // state now so the next utterance starts fresh. There's a small window where audio
+                // arriving between the EOU firing and this reset landing is processed against stale
+                // state; the debounced silence EOU requires (>=1280ms by default) makes that window
+                // rare in practice for live speech.
+                let streamer = speaker == .you ? self?.micStreamer : self?.systemStreamer
+                await streamer?.reset()
+            }
+        }
+
+        try await manager.loadModels()
+        return manager
+    }
+
+    private func startFeedLoop(for speaker: TranscriptSpeaker) {
+        let stream = AsyncStream<[Float]> { continuation in
+            switch speaker {
+            case .you: micFeedContinuation = continuation
+            case .others: systemFeedContinuation = continuation
+            }
+        }
+
+        let task = Task(priority: .userInitiated) { [weak self] in
+            for await chunk in stream {
+                guard let self, !Task.isCancelled else { break }
+                let streamer = speaker == .you ? self.micStreamer : self.systemStreamer
+                await self.feed(chunk, to: streamer)
+            }
+        }
+
+        switch speaker {
+        case .you: micFeedTask = task
+        case .others: systemFeedTask = task
+        }
+    }
+
+    private func feed(_ samples: [Float], to streamer: StreamingEouAsrManager?) async {
+        guard let streamer, let buffer = makePCMBuffer(from: samples) else { return }
+        do {
+            try await streamer.appendAudio(buffer)
+            try await streamer.processBufferedAudio()
+        } catch {
+            print("⚠️ Parakeet streaming transcription failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func finalize(_ streamer: StreamingEouAsrManager?, speaker: TranscriptSpeaker) async {
+        guard let streamer else { return }
+        do {
+            let text = try await streamer.finish()
+            guard !text.isEmpty else { return }
+            publish(text: text, speaker: speaker, isFinal: true)
+        } catch {
+            print("⚠️ Parakeet final transcription failed (\(speaker)): \(error.localizedDescription)")
+        }
+    }
+
+    private func publish(text: String, speaker: TranscriptSpeaker, isFinal: Bool) {
+        let update = TranscriptionUpdate(text: text, isFinal: isFinal)
+        switch speaker {
+        case .you: micUpdate = update
+        case .others: systemUpdate = update
+        }
     }
 
     private func startMicCapture() throws {
@@ -188,199 +215,93 @@ final class ParakeetTranscriptionService: ObservableObject {
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
     }
+}
 
-    private func startVadLoopIfNeeded() {
-        guard vadLoopTask == nil else { return }
-        guard let vadManager else { return }
-        let stream = AsyncStream<[Float]> { continuation in
-            self.vadContinuation = continuation
-        }
+// MARK: - Model Download Management
 
-        vadLoopTask = Task(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            await self.runVadLoop(vadManager: vadManager, chunks: stream)
+extension ParakeetTranscriptionService {
+    static func modelStorageDirectory() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory())
+        return base.appendingPathComponent("FluidAudio/Models/parakeet-eou-streaming", isDirectory: true)
+    }
+
+    private static func repo(for choice: ParakeetModelChoice) -> Repo {
+        switch choice {
+        case .eou160ms: return .parakeetEou160
+        case .eou320ms: return .parakeetEou320
+        case .eou1280ms: return .parakeetEou1280
         }
     }
 
-    private func runVadLoop(vadManager: VadManager, chunks: AsyncStream<[Float]>) async {
-        guard let asrManager else { return }
+    private static func modelDirectory(for choice: ParakeetModelChoice) -> URL {
+        modelStorageDirectory().appendingPathComponent(repo(for: choice).folderName, isDirectory: true)
+    }
 
-        do {
-            let state = await vadManager.makeStreamState()
-            var vadState = state
+    static func isDownloaded(_ choice: ParakeetModelChoice) -> Bool {
+        let dir = modelDirectory(for: choice)
+        return ModelNames.ParakeetEOU.requiredModels.allSatisfy {
+            FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path)
+        }
+    }
 
-            for await chunk in chunks {
-                if Task.isCancelled { break }
-                guard !chunk.isEmpty else { continue }
+    static func sizeStringForDownloadedModel(_ choice: ParakeetModelChoice) -> String? {
+        guard isDownloaded(choice), let size = directorySizeInBytes(at: modelDirectory(for: choice)) else {
+            return nil
+        }
+        return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
+    }
 
-                let vadStreamResult = try await vadManager.processStreamingChunk(
-                    chunk,
-                    state: vadState,
-                    config: .default,
-                    returnSeconds: false,
-                    timeResolution: 2
-                )
-
-                vadState = vadStreamResult.state
-
-                if let event = vadStreamResult.event {
-                    switch event.kind {
-                    case .speechStart:
-                        collectingSpeech = true
-                        currentMicSegmentSamples.removeAll(keepingCapacity: true)
-                        currentMicSegmentMaxProbability = 0
-                    case .speechEnd:
-                        break
-                    @unknown default:
-                        break
+    static func downloadModel(
+        _ choice: ParakeetModelChoice,
+        progressHandler: (@Sendable (Double, Int, Int) -> Void)? = nil
+    ) async throws {
+        try await ModelHub.download(
+            repo(for: choice),
+            to: modelStorageDirectory(),
+            progressHandler: progressHandler.map { handler in
+                // Flatten FluidAudio's phase enum to (fraction, completedFiles, totalFiles); the
+                // listing/compiling phases report no file counts, so they surface as 0 of 0.
+                { progress in
+                    switch progress.phase {
+                    case .downloading(let completed, let total):
+                        handler(progress.fractionCompleted, completed, total)
+                    case .listing, .compiling:
+                        handler(progress.fractionCompleted, 0, 0)
                     }
                 }
-
-                if collectingSpeech {
-                    currentMicSegmentSamples.append(contentsOf: chunk)
-                    currentMicSegmentMaxProbability = max(currentMicSegmentMaxProbability, vadStreamResult.probability)
-                }
-
-                let currentDurationSeconds = Double(currentMicSegmentSamples.count) / micSampleRate
-                let shouldForceEndByDuration = collectingSpeech && currentDurationSeconds >= maxMicChunkDuration
-
-                if shouldForceEndByDuration || vadStreamResult.event?.kind == .speechEnd {
-                    try await finalizeMicSegment(asrManager: asrManager)
-                }
             }
-
-            if shouldFinalizeMic {
-                try await finalizeMicSegment(asrManager: asrManager, allowEmpty: false, force: true)
-            }
-        } catch {
-            print("⚠️ Parakeet VAD loop error: \(error.localizedDescription)")
-        }
+        )
     }
 
-    private func finalizeMicSegment(
-        asrManager: AsrManager,
-        allowEmpty: Bool = false,
-        force: Bool = false
-    ) async throws {
-        guard collectingSpeech || force else { return }
-
-        defer {
-            collectingSpeech = false
-            currentMicSegmentSamples.removeAll(keepingCapacity: true)
-            currentMicSegmentMaxProbability = 0
-        }
-
-        let samples = currentMicSegmentSamples
-        if !allowEmpty && samples.isEmpty { return }
-
-        let durationSeconds = Double(samples.count) / micSampleRate
-        guard durationSeconds >= minMicChunkDuration || force else { return }
-        guard currentMicSegmentMaxProbability >= micProbabilityThreshold || force else { return }
-
-        let asrResult = try await transcribeParakeetChunk(samples, asrManager: asrManager)
-        let segmentText = asrResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !segmentText.isEmpty else { return }
-
-        accumulatedMicText = TranscriptionTextUtils.appendWithBoundarySmoothing(accumulatedMicText, segmentText)
-
-        micTranscribedText = accumulatedMicText
+    /// Removes a downloaded model's directory so the row flips back to "Download" and the disk
+    /// space is reclaimed.
+    static func deleteModel(_ choice: ParakeetModelChoice) throws {
+        let dir = modelDirectory(for: choice)
+        guard FileManager.default.fileExists(atPath: dir.path) else { return }
+        try FileManager.default.removeItem(at: dir)
     }
 
-    private func enqueueVadChunks(from samples: [Float]) {
-        guard !samples.isEmpty else { return }
-        guard capturingInternal else { return }
-
-        vadInputBuffer.append(contentsOf: samples)
-
-        while vadInputBuffer.count >= micChunkSamples {
-            let chunk = Array(vadInputBuffer.prefix(micChunkSamples))
-            vadInputBuffer.removeFirst(micChunkSamples)
-            vadContinuation?.yield(chunk)
+    private static func directorySizeInBytes(at url: URL) -> Int64? {
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
         }
-    }
 
-    private func transcribeSystemAudio() async {
-        guard let asrManager else { return }
-        guard !systemSamples.isEmpty else { return }
-
-        do {
-            try await transcribeSystemSamplesAndSetText(systemSamples, asrManager: asrManager)
-        } catch {
-            print("⚠️ Parakeet system transcription failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func startSystemRealtimeTranscriptionLoop() {
-        guard systemRealtimeTranscriptionTask == nil else { return }
-        systemRealtimeLastSampleCount = 0
-
-        systemRealtimeTranscriptionTask = Task(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            await self.runSystemRealtimeTranscriptionLoop()
-        }
-    }
-
-    private func runSystemRealtimeTranscriptionLoop() async {
-        guard let asrManager else { return }
-        while !Task.isCancelled {
-            guard capturingInternal else { break }
-
-            do {
-                try await Task.sleep(nanoseconds: UInt64(systemRealtimeIntervalSeconds * 1_000_000_000))
-            } catch {
-                break
-            }
-
-            guard capturingInternal, !Task.isCancelled else { break }
-            let snapshot = systemSamples
-
-            guard !snapshot.isEmpty else { continue }
-            let snapshotCount = snapshot.count
-            guard snapshotCount >= systemRealtimeMinInitialSamples else { continue }
-            guard snapshotCount - systemRealtimeLastSampleCount >= systemRealtimeMinNewSamples || systemRealtimeLastSampleCount == 0 else {
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey]) else {
                 continue
             }
-
-            // SCStream floats: same decode path as mic; cap tail; skip ASR when recent tail is silent.
-            do {
-                guard !Task.isCancelled else { return }
-                let tail = snapshot.count > systemRealtimeWindowSamples
-                    ? Array(snapshot.suffix(systemRealtimeWindowSamples))
-                    : snapshot
-                guard tail.count >= 16_000 else { continue }
-
-                let recentCount = min(systemRealtimeRecentActivitySamples, tail.count)
-                let recentTail = Array(tail.suffix(recentCount))
-                let recentRMS = TranscriptionTextUtils.rootMeanSquare(of: recentTail)
-                if recentRMS < systemRealtimeSilenceRMSThreshold {
-                    systemRealtimeLastSampleCount = snapshotCount
-                    continue
-                }
-
-                systemRealtimeLastSampleCount = snapshotCount
-
-                let asrResult = try await transcribeParakeetChunk(tail, asrManager: asrManager)
-                let raw = asrResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if raw.isEmpty { continue }
-                let text = TranscriptionTextUtils.normalizeSystemText(asrResult.text)
-                guard !text.isEmpty, !Task.isCancelled else { continue }
-                guard capturingInternal else { continue }
-                guard text != lastSystemRealtimePublishedNormalized else { continue }
-                lastSystemRealtimePublishedNormalized = text
-                systemTranscribedText = text
-            } catch {
-                if !Task.isCancelled {
-                    print("⚠️ Parakeet realtime system transcription failed: \(error.localizedDescription)")
-                }
+            guard values.isRegularFile == true else { continue }
+            if let allocated = values.totalFileAllocatedSize ?? values.fileAllocatedSize {
+                total += Int64(allocated)
             }
         }
-    }
-
-    private func transcribeSystemSamplesAndSetText(_ samples: [Float], asrManager: AsrManager) async throws {
-        let asrResult = try await transcribeParakeetChunk(samples, asrManager: asrManager)
-        let text = TranscriptionTextUtils.normalizeSystemText(asrResult.text)
-        guard !text.isEmpty else { return }
-        systemTranscribedText = text
+        return total
     }
 }
 
@@ -394,4 +315,3 @@ enum ParakeetError: Error, LocalizedError {
         }
     }
 }
-

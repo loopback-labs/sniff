@@ -47,9 +47,8 @@ final class TranscriptBuffer: ObservableObject {
 
     private var tailChunks: [TranscriptChunk] = []
     private var chunkIDs: [UUID] = []
-    private var pendingText: String = ""
-    private var pendingSpeaker: TranscriptSpeaker = .you
-    private let pendingChunkID = UUID()
+    private var pendingBySpeaker: [TranscriptSpeaker: String] = [:]
+    private var pendingChunkIDs: [TranscriptSpeaker: UUID] = [:]
     private var sessionFileHandle: FileHandle?
     private var sessionURL: URL?
     private let isoFormatter = ISO8601DateFormatter()
@@ -105,37 +104,52 @@ final class TranscriptBuffer: ObservableObject {
         sessionURL = nil
     }
 
-    func append(deltaText: String, speaker: TranscriptSpeaker, at timestamp: Date = Date()) {
-        let trimmed = deltaText.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Overwrites `speaker`'s in-progress utterance. Streaming ASR revises its own output as
+    /// more audio arrives, so `text` is the full text of the current utterance, not a delta —
+    /// nothing here is persisted or sentence-extracted until `commitPending` finalizes it.
+    func updatePending(text: String, speaker: TranscriptSpeaker) {
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count > maxPendingCharacters {
+            let start = trimmed.index(trimmed.endIndex, offsetBy: -maxPendingCharacters)
+            trimmed = String(trimmed[start...])
+        }
+
+        if trimmed.isEmpty {
+            pendingBySpeaker.removeValue(forKey: speaker)
+        } else {
+            pendingBySpeaker[speaker] = trimmed
+            if pendingChunkIDs[speaker] == nil {
+                pendingChunkIDs[speaker] = UUID()
+            }
+        }
+        refreshDisplay()
+    }
+
+    /// Finalizes `speaker`'s utterance: extracts complete sentences (persisting each), commits
+    /// any trailing remainder as its own chunk since no further revision will arrive for it,
+    /// and clears that speaker's pending text.
+    func commitPending(text: String, speaker: TranscriptSpeaker, at timestamp: Date = Date()) {
+        defer {
+            pendingBySpeaker.removeValue(forKey: speaker)
+            pruneTail(now: timestamp)
+            refreshDisplay()
+        }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        pendingSpeaker = speaker
-
-        if pendingText.isEmpty {
-            pendingText = trimmed
-        } else {
-            if needsSpaceBetween(pendingText, trimmed) {
-                pendingText.append(" ")
-            }
-            pendingText.append(trimmed)
+        let extraction = extractCompleteSentences(from: trimmed)
+        var sentences = extraction.sentences
+        if !extraction.remainder.isEmpty {
+            sentences.append(extraction.remainder)
         }
 
-        if pendingText.count > maxPendingCharacters {
-            let start = pendingText.index(pendingText.endIndex, offsetBy: -maxPendingCharacters)
-            pendingText = String(pendingText[start...])
-        }
-
-        let extraction = extractCompleteSentences(from: pendingText)
-        pendingText = extraction.remainder
-
-        for sentence in extraction.sentences {
+        for sentence in sentences {
             guard !isDuplicateRecentSentence(sentence, at: timestamp) else { continue }
             let chunk = TranscriptChunk(text: sentence, timestamp: timestamp, speaker: speaker)
             tailChunks.append(chunk)
             persist(chunk: chunk)
         }
-        pruneTail(now: timestamp)
-        refreshDisplay()
     }
 
     func refreshDisplay() {
@@ -146,13 +160,12 @@ final class TranscriptBuffer: ObservableObject {
         var newChunks = zip(tailChunks, chunkIDs).map { chunk, id in
             TranscriptDisplayChunk(text: chunk.text, timestamp: chunk.timestamp, speaker: chunk.speaker, id: id)
         }
-        let pending = pendingText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !pending.isEmpty {
+        for speaker in TranscriptSpeaker.allCases {
+            guard let pending = pendingBySpeaker[speaker], !pending.isEmpty else { continue }
+            let id = pendingChunkIDs[speaker] ?? UUID()
+            pendingChunkIDs[speaker] = id
             newChunks.append(
-                TranscriptDisplayChunk(
-                    text: pending, timestamp: Date(), speaker: pendingSpeaker,
-                    id: pendingChunkID, isPending: true
-                )
+                TranscriptDisplayChunk(text: pending, timestamp: Date(), speaker: speaker, id: id, isPending: true)
             )
         }
         if newChunks != displayChunks {
@@ -164,8 +177,8 @@ final class TranscriptBuffer: ObservableObject {
         let cutoff = now.addingTimeInterval(-detectionWindowSeconds)
         let recentChunks = tailChunks.filter { $0.timestamp >= cutoff }
         var text = joinChunks(recentChunks)
-        let pending = pendingText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !pending.isEmpty {
+        for speaker in TranscriptSpeaker.allCases {
+            guard let pending = pendingBySpeaker[speaker], !pending.isEmpty else { continue }
             if text.isEmpty {
                 text = pending
             } else if needsSpaceBetween(text, pending) {
@@ -177,22 +190,23 @@ final class TranscriptBuffer: ObservableObject {
         }
         return text
     }
-    
+
     func clear() {
         displayChunks = []
         latestQuestion = nil
         tailChunks.removeAll()
         chunkIDs.removeAll()
-        pendingText = ""
-        pendingSpeaker = .you
+        pendingBySpeaker.removeAll()
+        pendingChunkIDs.removeAll()
     }
 
-    /// Completed chunks (already pruned to `displayWindowSeconds`) plus the pending partial utterance, oldest first.
+    /// Completed chunks (already pruned to `displayWindowSeconds`) plus each speaker's pending
+    /// in-progress utterance (in `TranscriptSpeaker.allCases` order), oldest-committed-first.
     func recentTurns() -> [(speaker: TranscriptSpeaker, text: String)] {
         var turns = tailChunks.map { (speaker: $0.speaker, text: $0.text) }
-        let pending = pendingText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !pending.isEmpty {
-            turns.append((speaker: pendingSpeaker, text: pending))
+        for speaker in TranscriptSpeaker.allCases {
+            guard let pending = pendingBySpeaker[speaker], !pending.isEmpty else { continue }
+            turns.append((speaker: speaker, text: pending))
         }
         return turns
     }

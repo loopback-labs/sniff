@@ -32,6 +32,16 @@ enum LLMProvider: String, CaseIterable, Identifiable {
     var keychainKey: String {
         return "\(rawValue)_api_key"
     }
+
+    /// Where the user creates an API key for this provider, linked from Settings.
+    var apiKeyURL: URL? {
+        switch self {
+        case .openai: return URL(string: "https://platform.openai.com/api-keys")
+        case .claude: return URL(string: "https://console.anthropic.com/settings/keys")
+        case .gemini: return URL(string: "https://aistudio.google.com/app/apikey")
+        case .chatgpt: return nil
+        }
+    }
 }
 
 protocol LLMService {

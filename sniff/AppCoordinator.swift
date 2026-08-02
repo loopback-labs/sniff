@@ -23,6 +23,7 @@ class AppCoordinator: NSObject, ObservableObject {
     let transcriptBuffer = TranscriptBuffer()
     let keychainService = KeychainService()
     let chatGPTAuthManager = ChatGPTAuthManager()
+    let modelDownloads = ModelDownloadManager()
     
     private var llmService: LLMService?
     private var qaOverlayWindow: NSWindow?
@@ -35,11 +36,7 @@ class AppCoordinator: NSObject, ObservableObject {
     private let audioQuestionPipeline: AudioQuestionPipeline
     private let promptBuilder = PromptBuilder()
     private var isCaptureTransitioning = false
-    private let whisperMicDeltaProcessor = TranscriptionDeltaProcessor()
-    private let whisperSystemDeltaProcessor = TranscriptionDeltaProcessor()
-    private let parakeetMicDeltaProcessor = TranscriptionDeltaProcessor()
-    private let parakeetSystemDeltaProcessor = TranscriptionDeltaProcessor()
-    
+
     @Published var isRunning = false
     @Published var selectedProvider: LLMProvider {
         didSet {
@@ -77,6 +74,17 @@ class AppCoordinator: NSObject, ObservableObject {
             }
         }
     }
+
+    /// Mirrors `selectedParakeetModelChoice` so both engines have one source of truth here rather
+    /// than Settings and onboarding each keeping their own `@State` copy alongside UserDefaults.
+    @Published var selectedWhisperModelID: String {
+        didSet {
+            UserDefaults.standard.set(selectedWhisperModelID, forKey: UserDefaultsKeys.whisperModelId)
+            if isRunning && selectedSpeechEngine == .whisper {
+                Task { await restartSpeechCapture() }
+            }
+        }
+    }
     @Published var showOverlay: Bool {
         didSet {
             UserDefaults.standard.set(showOverlay, forKey: UserDefaultsKeys.showOverlay)
@@ -88,7 +96,13 @@ class AppCoordinator: NSObject, ObservableObject {
     @Published var overlaysForceInteractive = false
 
     private var clickThroughTimer: Timer?
-    
+
+    /// Where session transcripts are written. Surfaced in Settings > General.
+    static let transcriptSaveDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Documents")
+        .appendingPathComponent("sniff-transcripts")
+
+
     override init() {
         let savedProvider = UserDefaults.standard.string(forKey: UserDefaultsKeys.selectedLLMProvider) ?? LLMProvider.openai.rawValue
         let initialLLMProvider = LLMProvider(rawValue: savedProvider) ?? .openai
@@ -96,8 +110,9 @@ class AppCoordinator: NSObject, ObservableObject {
         showOverlay = UserDefaults.standard.object(forKey: UserDefaultsKeys.showOverlay) as? Bool ?? true
         let savedSpeechEngine = UserDefaults.standard.string(forKey: UserDefaultsKeys.selectedSpeechEngine) ?? SpeechEngine.whisper.rawValue
         selectedSpeechEngine = SpeechEngine(rawValue: savedSpeechEngine) ?? .whisper
-        let savedParakeetModel = UserDefaults.standard.string(forKey: UserDefaultsKeys.selectedParakeetModelChoice) ?? ParakeetModelChoice.v3Multilingual.rawValue
-        selectedParakeetModelChoice = ParakeetModelChoice(rawValue: savedParakeetModel) ?? .v3Multilingual
+        let savedParakeetModel = UserDefaults.standard.string(forKey: UserDefaultsKeys.selectedParakeetModelChoice) ?? ParakeetModelChoice.eou320ms.rawValue
+        selectedParakeetModelChoice = ParakeetModelChoice(rawValue: savedParakeetModel) ?? .eou320ms
+        selectedWhisperModelID = LocalWhisperService.currentSelectedModelID()
         
         audioQuestionPipeline = AudioQuestionPipeline(questionDetectionService: questionDetectionService)
 
@@ -139,9 +154,8 @@ class AppCoordinator: NSObject, ObservableObject {
     }
 
     private struct SpeechEngineRouting {
-        let sourcePublishers: [(speaker: TranscriptSpeaker, publisher: AnyPublisher<String, Never>)]
+        let sourcePublishers: [(speaker: TranscriptSpeaker, publisher: AnyPublisher<TranscriptionUpdate, Never>)]
         let startCapture: () async throws -> Void
-        let deltaProcessor: (TranscriptSpeaker) -> TranscriptionDeltaProcessor
     }
 
     private func speechRouting(for engine: SpeechEngine) -> SpeechEngineRouting {
@@ -149,37 +163,25 @@ class AppCoordinator: NSObject, ObservableObject {
         case .whisper:
             return SpeechEngineRouting(
                 sourcePublishers: [
-                    (.you, localWhisperService.$micTranscribedText.eraseToAnyPublisher()),
-                    (.others, localWhisperService.$systemTranscribedText.eraseToAnyPublisher())
+                    (.you, localWhisperService.$micUpdate.eraseToAnyPublisher()),
+                    (.others, localWhisperService.$systemUpdate.eraseToAnyPublisher())
                 ],
                 startCapture: { [weak self] in
                     guard let self else { throw CancellationError() }
                     self.configureWhisperService()
                     try await self.localWhisperService.startCapture()
-                },
-                deltaProcessor: { speaker in
-                    switch speaker {
-                    case .you: return self.whisperMicDeltaProcessor
-                    case .others: return self.whisperSystemDeltaProcessor
-                    }
                 }
             )
         case .parakeet:
             return SpeechEngineRouting(
                 sourcePublishers: [
-                    (.you, parakeetService.$micTranscribedText.eraseToAnyPublisher()),
-                    (.others, parakeetService.$systemTranscribedText.eraseToAnyPublisher())
+                    (.you, parakeetService.$micUpdate.eraseToAnyPublisher()),
+                    (.others, parakeetService.$systemUpdate.eraseToAnyPublisher())
                 ],
                 startCapture: { [weak self] in
                     guard let self else { throw CancellationError() }
                     self.configureParakeetService()
                     try await self.parakeetService.startCapture()
-                },
-                deltaProcessor: { speaker in
-                    switch speaker {
-                    case .you: return self.parakeetMicDeltaProcessor
-                    case .others: return self.parakeetSystemDeltaProcessor
-                    }
                 }
             )
         }
@@ -195,7 +197,7 @@ class AppCoordinator: NSObject, ObservableObject {
     }
 
     private func stopSpeechCapture(finalizeSystem: Bool) async {
-        await localWhisperService.stopAll(finalizeSystem: finalizeSystem)
+        await localWhisperService.stopCapture(finalizeSystem: finalizeSystem)
         await parakeetService.stopCapture(finalizeSystem: finalizeSystem)
     }
 
@@ -208,7 +210,6 @@ class AppCoordinator: NSObject, ObservableObject {
         let engineForSystemAudio = selectedSpeechEngine
         await stopSpeechCapture(finalizeSystem: false)
         await screenCaptureService.stopCapture()
-        resetDeltaProcessors()
         localWhisperService.reset()
         parakeetService.reset()
         cancellables.removeAll()
@@ -229,11 +230,7 @@ class AppCoordinator: NSObject, ObservableObject {
     }
 
     private func configureWhisperService() {
-        let storedModelID = UserDefaults.standard.string(forKey: UserDefaultsKeys.whisperModelId) ?? ""
-        let modelID = storedModelID.isEmpty
-            ? LocalWhisperService.defaultModelID()
-            : LocalWhisperService.normalizedModelID(from: storedModelID)
-        localWhisperService.configure(modelID: modelID)
+        localWhisperService.configure(modelID: selectedWhisperModelID)
     }
 
     private func configureParakeetService() {
@@ -249,11 +246,13 @@ class AppCoordinator: NSObject, ObservableObject {
         sourcePublishers.forEach { source in
             source.publisher
                 .receive(on: RunLoop.main)
-                .sink { [weak self] text in
+                .sink { [weak self] update in
                     guard let self = self else { return }
-                    let delta = self.deltaProcessor(for: source.speaker).consume(text)
-                    guard !delta.isEmpty else { return }
-                    self.transcriptBuffer.append(deltaText: delta, speaker: source.speaker)
+                    if update.isFinal {
+                        self.transcriptBuffer.commitPending(text: update.text, speaker: source.speaker)
+                    } else {
+                        self.transcriptBuffer.updatePending(text: update.text, speaker: source.speaker)
+                    }
                 }
                 .store(in: &cancellables)
         }
@@ -280,17 +279,6 @@ class AppCoordinator: NSObject, ObservableObject {
                 self.transcriptBuffer.updateLatestQuestion(result.latestQuestion)
             }
             .store(in: &cancellables)
-    }
-
-    private func deltaProcessor(for speaker: TranscriptSpeaker) -> TranscriptionDeltaProcessor {
-        speechRouting(for: selectedSpeechEngine).deltaProcessor(speaker)
-    }
-
-    private func resetDeltaProcessors() {
-        whisperMicDeltaProcessor.reset()
-        whisperSystemDeltaProcessor.reset()
-        parakeetMicDeltaProcessor.reset()
-        parakeetSystemDeltaProcessor.reset()
     }
 
     private func stripSpeakerLabels(from text: String) -> String {
@@ -341,13 +329,9 @@ class AppCoordinator: NSObject, ObservableObject {
         guard await requestPermissions() else { return }
         
         transcriptBuffer.clear()
-        resetDeltaProcessors()
         localWhisperService.reset()
         parakeetService.reset()
-        let saveURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Documents")
-            .appendingPathComponent("sniff-transcripts")
-        transcriptBuffer.startSession(saveDirectoryURL: saveURL)
+        transcriptBuffer.startSession(saveDirectoryURL: Self.transcriptSaveDirectory)
         audioQuestionPipeline.reset()
         setupSubscriptions()
         
@@ -403,9 +387,20 @@ class AppCoordinator: NSObject, ObservableObject {
         isRunning = false
     }
     
+    /// Both engines now require an explicit model download (Settings > Speech, or the
+    /// transcription-model onboarding step) before capture can start.
+    func needsTranscriptionModelSetup() -> Bool {
+        switch selectedSpeechEngine {
+        case .whisper:
+            return !LocalWhisperService.listDownloadedModels().contains(selectedWhisperModelID)
+        case .parakeet:
+            return !ParakeetTranscriptionService.isDownloaded(selectedParakeetModelChoice)
+        }
+    }
+
     func requestPermissions() async -> Bool {
         await appPermissions.refreshAccurate()
-        if appPermissions.allGranted { return true }
+        if appPermissions.allGranted && !needsTranscriptionModelSetup() { return true }
         presentPermissionOnboardingWindow()
         return false
     }
@@ -414,8 +409,8 @@ class AppCoordinator: NSObject, ObservableObject {
         // Give TCC daemon extra time to initialise on macOS 26 before querying.
         try? await Task.sleep(for: .milliseconds(500))
         await appPermissions.refreshAccurate()
-        if appPermissions.allGranted {
-            dismissPermissionOnboardingIfAllGranted()
+        if appPermissions.allGranted && !needsTranscriptionModelSetup() {
+            dismissOnboardingIfComplete()
         } else {
             presentPermissionOnboardingWindow()
         }
@@ -430,17 +425,19 @@ class AppCoordinator: NSObject, ObservableObject {
         }
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 650),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Sniff permissions"
+        window.title = "Set up Sniff"
         window.isReleasedWhenClosed = false
         window.delegate = self
 
-        let root = PermissionOnboardingView(permissions: appPermissions) { [weak self] in
-            self?.dismissPermissionOnboardingIfAllGranted()
+        // Not wrapped in a ScrollView: the model step hosts a grouped Form, which is already its
+        // own scroll container and lays out badly when nested inside another one.
+        let root = OnboardingContainerView(coordinator: self) { [weak self] in
+            self?.finishOnboarding()
         }
         window.contentView = NSHostingView(rootView: root)
         window.center()
@@ -448,8 +445,13 @@ class AppCoordinator: NSObject, ObservableObject {
         permissionOnboardingWindow = window
     }
 
-    func dismissPermissionOnboardingIfAllGranted() {
-        guard appPermissions.allGranted else { return }
+    func finishOnboarding() {
+        permissionOnboardingWindow?.close()
+        permissionOnboardingWindow = nil
+    }
+
+    func dismissOnboardingIfComplete() {
+        guard appPermissions.allGranted, !needsTranscriptionModelSetup() else { return }
         permissionOnboardingWindow?.close()
         permissionOnboardingWindow = nil
     }
@@ -480,6 +482,8 @@ class AppCoordinator: NSObject, ObservableObject {
         return window
     }
     
+    /// Keep `AppShortcut.all` in sync with the bindings registered here — it's what Settings >
+    /// Shortcuts displays.
     private func setupKeyboardShortcuts() {
         hotKeys.removeAll()
 
@@ -779,7 +783,7 @@ class AppCoordinator: NSObject, ObservableObject {
         }
         
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 660),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false

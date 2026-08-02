@@ -7,7 +7,7 @@
 
 import Foundation
 
-enum TranscriptSpeaker: CaseIterable {
+enum TranscriptSpeaker: CaseIterable, Hashable, Sendable {
     case you
     case others
 

@@ -16,10 +16,6 @@ struct SettingsView: View {
     @State private var selectedDeviceID: AudioDeviceID = 0
     @State private var showingAlert = false
     @State private var alertMessage = ""
-    @State private var whisperModelID: String = LocalWhisperService.defaultModelID()
-    @State private var downloadedModels: [String] = []
-    @State private var downloadingModelName: String?
-    @State private var modelSizes: [String: String] = [:]
     @State private var chatGPTAuthUIVersion = 0
     private let keychainService = KeychainService()
 
@@ -31,22 +27,29 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        TabView {
-            aiTab
-                .tabItem { Label("AI", systemImage: "brain") }
+        VStack(spacing: 0) {
+            TabView {
+                aiTab
+                    .tabItem { Label("AI", systemImage: "brain") }
 
-            speechTab
-                .tabItem { Label("Speech", systemImage: "waveform") }
+                speechTab
+                    .tabItem { Label("Speech", systemImage: "waveform") }
 
-            generalTab
-                .tabItem { Label("General", systemImage: "gearshape") }
+                shortcutsTab
+                    .tabItem { Label("Shortcuts", systemImage: "command") }
+
+                generalTab
+                    .tabItem { Label("General", systemImage: "gearshape") }
+            }
+
+            // Sits outside the TabView so an in-progress model download stays visible no matter
+            // which tab is on screen.
+            ActiveDownloadsBar(downloads: coordinator.modelDownloads)
         }
-        .frame(width: 560, height: 620)
+        .frame(width: 620, height: 660)
         .onAppear {
             loadAPIKey()
             loadSelectedDevice()
-            loadWhisperModelSelection()
-            listDownloadedModels()
         }
         .alert("Settings", isPresented: $showingAlert) {
             Button("OK") { }
@@ -59,7 +62,7 @@ struct SettingsView: View {
 
     private var aiTab: some View {
         Form {
-            Section {
+            Section("Model") {
                 Picker("Provider", selection: $coordinator.selectedProvider) {
                     ForEach(LLMProvider.allCases) { provider in
                         Text(provider.displayName).tag(provider)
@@ -74,79 +77,139 @@ struct SettingsView: View {
                         Text(option.displayName).tag(option.id)
                     }
                 }
-            } footer: {
-                Text("Screen questions require a vision-capable model for this provider.")
+
+                visionCapabilityRow
             }
 
             if coordinator.selectedProvider.usesOAuth {
-                Section("ChatGPT account") {
+                Section("ChatGPT Account") {
                     chatGPTAuthSection
                         .id(chatGPTAuthUIVersion)
                 }
             } else {
-                Section("\(coordinator.selectedProvider.displayName) API key") {
+                Section {
                     apiKeySection
+                } header: {
+                    Text("\(coordinator.selectedProvider.displayName) API Key")
+                } footer: {
+                    HStack(spacing: 4) {
+                        Text("Stored in your macOS Keychain.")
+                        if let url = coordinator.selectedProvider.apiKeyURL {
+                            Link("Get a key", destination: url)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
             }
         }
         .formStyle(.grouped)
     }
 
+    /// Replaces the old static "screen questions need vision" footer with the actual capability of
+    /// the model that's currently selected.
+    @ViewBuilder
+    private var visionCapabilityRow: some View {
+        let supportsVision = LLMModelCatalog.supportsVision(
+            provider: coordinator.selectedProvider,
+            modelId: coordinator.selectedModelId
+        )
+
+        Label {
+            Text(supportsVision
+                ? "Reads screenshots — screen questions (⌘⇧Q) work."
+                : "No image input — screen questions (⌘⇧Q) will fail with this model.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: supportsVision ? "eye" : "eye.slash")
+                .foregroundStyle(supportsVision ? Color.green : Color.orange)
+        }
+    }
+
     @ViewBuilder
     private var apiKeySection: some View {
         if apiKeyUI.hasStoredKey && !apiKeyUI.isEditing {
-            if apiKeyUI.isViewingSecret {
-                Text(apiKey)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Text("••••••••••••••••")
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            LabeledContent("Key") {
+                HStack(spacing: 8) {
+                    Text(apiKeyUI.isViewingSecret ? apiKey : "••••••••••••••••")
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(apiKeyUI.isViewingSecret ? .primary : .secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Button {
+                        toggleViewMode()
+                    } label: {
+                        Image(systemName: apiKeyUI.isViewingSecret ? "eye.slash" : "eye")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(apiKeyUI.isViewingSecret ? "Hide key" : "Reveal key")
+                }
             }
 
             HStack {
-                Button(apiKeyUI.isViewingSecret ? "Hide" : "View") { toggleViewMode() }
-                Button("Edit") { enterEditMode() }
-                Button("Clear", role: .destructive) { clearAPIKey() }
+                Button("Replace") { enterEditMode() }
+                Spacer()
+                Button("Remove", role: .destructive) { clearAPIKey() }
             }
         } else {
-            SecureField("Enter API key", text: $apiKey)
+            SecureField("Paste your API key", text: $apiKey)
                 .textFieldStyle(.roundedBorder)
 
             HStack {
                 Button("Save") { saveAPIKey() }
                     .buttonStyle(.borderedProminent)
+                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                 if apiKeyUI.hasStoredKey {
                     Button("Cancel") { cancelEdit() }
-                    Button("Clear", role: .destructive) { clearAPIKey() }
                 }
+
+                Spacer()
             }
         }
+    }
+
+    private var chatGPTStatusText: String {
+        guard let hint = coordinator.chatGPTAuthManager.accountHint, hint.contains("@") else {
+            return "Signed in"
+        }
+        return hint
     }
 
     @ViewBuilder
     private var chatGPTAuthSection: some View {
         if coordinator.chatGPTAuthManager.isSignedIn {
             LabeledContent("Status") {
-                if let hint = coordinator.chatGPTAuthManager.accountHint, !hint.isEmpty {
-                    Text("Session active (\(hint))")
-                } else {
-                    Text("Signed in")
+                Label {
+                    Text(chatGPTStatusText)
+                } icon: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                }
+                // The hint is an opaque account ID unless it happens to be an address, so it goes
+                // in a tooltip rather than being displayed as a meaningless UUID.
+                .help(coordinator.chatGPTAuthManager.accountHint.map { "Account \($0)" } ?? "")
+            }
+
+            HStack {
+                Spacer()
+                Button("Sign Out", role: .destructive) {
+                    coordinator.chatGPTAuthManager.signOut()
+                    coordinator.refreshLLMAfterChatGPTAuth()
+                    chatGPTAuthUIVersion += 1
                 }
             }
-            Button("Sign out") {
-                coordinator.chatGPTAuthManager.signOut()
-                coordinator.refreshLLMAfterChatGPTAuth()
-                chatGPTAuthUIVersion += 1
-            }
         } else {
-            Text("Sign in with your ChatGPT account (OAuth).")
+            Text("Sign in with your ChatGPT account to use it as the provider — no API key needed.")
+                .font(.caption)
                 .foregroundStyle(.secondary)
-            Button("Sign in with ChatGPT") {
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button("Sign In with ChatGPT") {
                 Task {
                     do {
                         try await coordinator.chatGPTAuthManager.signInWithBrowser()
@@ -176,41 +239,32 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
+            } header: {
+                Text("Engine")
             } footer: {
                 Text(coordinator.selectedSpeechEngine == .whisper
-                    ? "WhisperKit runs on-device for both microphone and system audio, with on-demand model downloads."
-                    : "Parakeet transcribes microphone + system audio (FluidAudio).")
+                    ? "WhisperKit transcribes microphone and system audio on-device, in short bursts after each pause."
+                    : "Parakeet (FluidAudio) streams text on-device as you speak, with built-in end-of-utterance detection.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            switch coordinator.selectedSpeechEngine {
-            case .whisper:
-                Section {
-                    ForEach(LocalWhisperService.availableModelNames, id: \.self) { name in
-                        whisperModelRow(for: name)
-                    }
-                } header: {
-                    Text("Whisper model")
-                } footer: {
-                    Text("Models are downloaded on demand to app-scoped storage.")
-                }
-            case .parakeet:
-                Section {
-                    Picker("Model", selection: $coordinator.selectedParakeetModelChoice) {
-                        ForEach(ParakeetModelChoice.allCases) { choice in
-                            Text(choice.displayName).tag(choice)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                } header: {
-                    Text("Parakeet model")
-                } footer: {
-                    Text("Models run locally via FluidAudio.")
-                }
+            Section {
+                SpeechModelListView(coordinator: coordinator, engine: coordinator.selectedSpeechEngine)
+            } header: {
+                Text("\(coordinator.selectedSpeechEngine.displayName) Model")
+            } footer: {
+                Text("Downloaded once to app storage and reused on every launch. Downloads keep running if you switch tabs or close this window.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            Section("Audio input") {
-                Picker("Input device", selection: $selectedDeviceID) {
-                    Text("Select Device").tag(AudioDeviceID(0))
+            Section("Audio Input") {
+                Picker("Microphone", selection: $selectedDeviceID) {
+                    Text("System default").tag(AudioDeviceID(0))
                     ForEach(audioDeviceService.inputDevices) { device in
                         Text(device.name).tag(device.id)
                     }
@@ -218,52 +272,37 @@ struct SettingsView: View {
                 .onChange(of: selectedDeviceID) { _, newValue in
                     setInputDevice(newValue)
                 }
-
-                if let currentDevice = audioDeviceService.getDefaultInputDevice() {
-                    LabeledContent("Current", value: currentDevice.name)
-                        .foregroundStyle(.secondary)
-                }
             }
         }
         .formStyle(.grouped)
     }
 
-    @ViewBuilder
-    private func whisperModelRow(for name: String) -> some View {
-        let isDownloaded = downloadedModels.contains(name)
-        let isSelected = whisperModelID == name
-        let sizeText = isDownloaded
-            ? modelSizes[name]
-            : LocalWhisperService.estimatedSizeString(for: name).map { "~\($0)" }
+    // MARK: - Shortcuts tab
 
-        LabeledContent {
-            if isDownloaded {
-                Button(isSelected ? "Using" : "Use") {
-                    selectWhisperModel(name)
-                }
-                .disabled(isSelected)
-            } else {
-                Button {
-                    downloadModel(named: name)
-                } label: {
-                    if downloadingModelName == name {
-                        HStack(spacing: 4) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Downloading…")
+    private var shortcutsTab: some View {
+        Form {
+            ForEach(AppShortcut.all) { group in
+                Section(group.name) {
+                    ForEach(group.shortcuts) { shortcut in
+                        LabeledContent {
+                            Text(shortcut.keys)
+                                .font(.system(.body, design: .rounded).weight(.medium))
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(shortcut.title)
+                                Text(shortcut.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
-                    } else {
-                        Text("Download")
                     }
                 }
-                .disabled(downloadingModelName != nil)
-            }
-        } label: {
-            Text(name)
-            if let sizeText {
-                Text(sizeText)
             }
         }
+        .formStyle(.grouped)
     }
 
     // MARK: - General tab
@@ -271,12 +310,69 @@ struct SettingsView: View {
     private var generalTab: some View {
         Form {
             Section {
-                Toggle("Include overlay in screenshots", isOn: $coordinator.showOverlay)
+                Toggle("Include overlays in screenshots", isOn: $coordinator.showOverlay)
+            } header: {
+                Text("Privacy")
             } footer: {
-                Text("When off, sniff's overlays stay invisible in screen shares and captures.")
+                Text("When off, Sniff's overlays stay invisible in screen shares and captures.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section("Permissions") {
+                ForEach(AppPermissionKind.allCases) { kind in
+                    permissionRow(kind)
+                }
+            }
+
+            Section("Storage") {
+                LabeledContent("Transcripts") {
+                    Button("Show in Finder") {
+                        revealInFinder(AppCoordinator.transcriptSaveDirectory)
+                    }
+                }
+
+                DownloadedModelsSizeRow(downloads: coordinator.modelDownloads)
             }
         }
         .formStyle(.grouped)
+        .task {
+            await coordinator.appPermissions.refreshAccurate()
+            coordinator.modelDownloads.refreshInstalled()
+        }
+    }
+
+    @ViewBuilder
+    private func permissionRow(_ kind: AppPermissionKind) -> some View {
+        let granted = coordinator.appPermissions.isGranted(kind)
+
+        LabeledContent {
+            if granted {
+                Label("Granted", systemImage: "checkmark.circle.fill")
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(.green)
+                    .font(.caption)
+            } else {
+                Button("Open Settings") {
+                    coordinator.appPermissions.openSystemSettings(for: kind)
+                }
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(kind.title)
+                Text(kind.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func revealInFinder(_ url: URL) {
+        // Created on demand: the transcripts folder doesn't exist until the first session runs.
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     // MARK: - API Key Management
@@ -297,6 +393,7 @@ struct SettingsView: View {
         loadAPIKey()
         apiKeyUI.isEditing = true
         apiKeyUI.isViewingSecret = false
+        apiKey = ""
     }
 
     private func cancelEdit() {
@@ -313,14 +410,16 @@ struct SettingsView: View {
     }
 
     private func saveAPIKey() {
-        guard !apiKey.isEmpty else {
+        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
             showAlert("API key cannot be empty")
             return
         }
 
         do {
-            try keychainService.saveAPIKey(apiKey, for: coordinator.selectedProvider)
-            coordinator.updateAPIKey(apiKey, for: coordinator.selectedProvider)
+            try keychainService.saveAPIKey(trimmed, for: coordinator.selectedProvider)
+            coordinator.updateAPIKey(trimmed, for: coordinator.selectedProvider)
+            apiKey = trimmed
             apiKeyUI.hasStoredKey = true
             apiKeyUI.isEditing = false
         } catch {
@@ -337,59 +436,6 @@ struct SettingsView: View {
             coordinator.rebuildLLMService()
         } catch {
             showAlert("Failed to clear API key: \(error.localizedDescription)")
-        }
-    }
-
-    // MARK: - Whisper Model Management
-
-    private func loadWhisperModelSelection() {
-        let storedModelID = UserDefaults.standard.string(forKey: UserDefaultsKeys.whisperModelId) ?? ""
-        if storedModelID.isEmpty {
-            whisperModelID = LocalWhisperService.defaultModelID()
-        } else {
-            whisperModelID = LocalWhisperService.normalizedModelID(from: storedModelID)
-        }
-    }
-
-    private func selectWhisperModel(_ name: String) {
-        let normalized = LocalWhisperService.normalizedModelID(from: name)
-        guard LocalWhisperService.availableModelNames.contains(normalized) else {
-            showAlert("Invalid Whisper model selection")
-            return
-        }
-        UserDefaults.standard.set(normalized, forKey: UserDefaultsKeys.whisperModelId)
-        whisperModelID = normalized
-    }
-
-    private func listDownloadedModels() {
-        downloadedModels = LocalWhisperService.listDownloadedModels()
-        var sizes: [String: String] = [:]
-        for model in downloadedModels {
-            if let size = LocalWhisperService.sizeStringForDownloadedModel(model) {
-                sizes[model] = size
-            }
-        }
-        modelSizes = sizes
-    }
-
-    private func downloadModel(named name: String) {
-        downloadingModelName = name
-
-        Task {
-            do {
-                _ = try await LocalWhisperService.downloadModel(named: name)
-
-                await MainActor.run {
-                    downloadingModelName = nil
-                    listDownloadedModels()
-                    selectWhisperModel(name)
-                }
-            } catch {
-                await MainActor.run {
-                    downloadingModelName = nil
-                    showAlert("Failed to download model: \(error.localizedDescription)")
-                }
-            }
         }
     }
 
@@ -413,6 +459,20 @@ struct SettingsView: View {
             }
         } catch {
             showAlert(error.localizedDescription)
+        }
+    }
+}
+
+// MARK: - Storage
+
+/// Observes the manager directly so the figure updates when a model is downloaded or removed.
+private struct DownloadedModelsSizeRow: View {
+    @ObservedObject var downloads: ModelDownloadManager
+
+    var body: some View {
+        LabeledContent("Downloaded models") {
+            Text(downloads.totalInstalledSizeString() ?? "None")
+                .foregroundStyle(.secondary)
         }
     }
 }
