@@ -9,6 +9,12 @@ globs:
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## General Instructions:
+
+- Follow YAGNI principles, only implement features when they are needed, use existing battle-tested libraries where possible
+- Avoid long comments, on comment the WHY, not the WHAT
+- Avoid very thin wrapper functions
+
 ## What this is
 
 Sniff is a macOS menu bar app (SwiftUI/AppKit) that captures screen + audio during calls/interviews and streams LLM-generated answers into draggable overlay windows. See `README.md` for the full feature/permissions/usage rundown — don't duplicate it here.

@@ -1,24 +1,14 @@
-//
-//  PermissionOnboardingView.swift
-//  sniff
-
 import Observation
 import SwiftUI
 
+/// Content of the onboarding permissions step. Title and navigation come from
+/// `OnboardingContainerView`, which advances on its own once `allGranted` flips — the polling here
+/// is what makes returning from System Settings move the flow forward without a click.
 struct PermissionOnboardingView: View {
   @Bindable var permissions: AppPermissions
-  let onAllGranted: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text("Set up Sniff")
-        .font(.title2.weight(.semibold))
-
-      Text("Allow these permissions so Sniff can capture screen, system audio, and your microphone.")
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-
       if permissions.screenRecordingMayNeedRelaunch {
         Text("If Screen & System Audio Recording is already allowed, quit and reopen Sniff. macOS applies that permission after relaunch.")
           .font(.caption)
@@ -33,30 +23,16 @@ struct PermissionOnboardingView: View {
       }
 
       Spacer(minLength: 0)
-
-      HStack {
-        Spacer()
-
-        Button("Continue") {
-          Task {
-            await permissions.refreshAccurate()
-            if permissions.allGranted {
-              onAllGranted()
-            }
-          }
-        }
-        .keyboardShortcut(.defaultAction)
-      }
     }
-    .padding(20)
-    .frame(width: 480, alignment: .top)
+    .padding(.horizontal, 20)
+    .padding(.bottom, 20)
+    .frame(maxWidth: .infinity, alignment: .topLeading)
     .task {
       await permissions.refreshAccurate()
       while !permissions.allGranted {
         try? await Task.sleep(for: .seconds(2))
         permissions.refreshQuick()
       }
-      onAllGranted()
     }
   }
 

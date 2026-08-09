@@ -1,11 +1,5 @@
-//
-//  ScreenCaptureService.swift
-//  sniff
-//
-//  Created by Piyushh Bhutoria on 15/01/26.
-//
-
 import Foundation
+
 import Combine
 import ScreenCaptureKit
 import AppKit
@@ -145,8 +139,23 @@ extension ScreenCaptureService: SCStreamOutput {
     }
 }
 
-enum ScreenCaptureError: Error {
+enum ScreenCaptureError: Error, LocalizedError {
     case noDisplay
+
+    var errorDescription: String? {
+        switch self {
+        case .noDisplay:
+            // ScreenCaptureKit reports zero displays when the Screen Recording grant is stale even
+            // though `CGPreflightScreenCaptureAccess` still answers "granted" — which is why the
+            // permission check upstream passes and only the capture itself fails. Rebuilding the
+            // app (a new signature for the same bundle id) is the usual trigger.
+            return """
+                No capturable display available. macOS may have invalidated Sniff's \
+                Screen & System Audio Recording permission — re-enable it in System Settings › \
+                Privacy & Security › Screen & System Audio Recording, then quit and reopen Sniff.
+                """
+        }
+    }
 }
 
 private nonisolated final class SystemAudioRelay: @unchecked Sendable {

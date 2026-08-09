@@ -10,6 +10,8 @@ final class LocalWhisperService: ObservableObject {
     @Published var micUpdate: TranscriptionUpdate = TranscriptionUpdate(text: "", isFinal: true)
     @Published var systemUpdate: TranscriptionUpdate = TranscriptionUpdate(text: "", isFinal: true)
     @Published var isCapturing: Bool = false
+    /// Smoothed 0...1 microphone peak, so the UI can show that audio is actually arriving.
+    @Published private(set) var micLevel: Float = 0
 
     static let modelSelectionKey = UserDefaultsKeys.whisperModelId
 
@@ -30,6 +32,7 @@ final class LocalWhisperService: ObservableObject {
     private lazy var micSampleBridge = MicSampleBridge(label: "com.sniff.whisper.mic") { [weak self] samples in
         Task { @MainActor [weak self] in
             guard let self, self.capturingInternal else { return }
+            self.micLevel = AudioLevelMeter.next(level: self.micLevel, samples: samples)
             self.micVadSegmenter.enqueue(samples)
         }
     }
@@ -102,6 +105,7 @@ final class LocalWhisperService: ObservableObject {
     func reset() {
         micUpdate = TranscriptionUpdate(text: "", isFinal: true)
         systemUpdate = TranscriptionUpdate(text: "", isFinal: true)
+        micLevel = 0
         micVadSegmenter.reset()
         systemVadSegmenter.reset()
         micLastPartialTime = .distantPast
@@ -195,8 +199,12 @@ final class LocalWhisperService: ObservableObject {
     }
 
     private func transcribePartial(samples: [Float], speaker: TranscriptSpeaker) async {
-        // Partials are disposable: re-check and drop on contention rather than queueing.
+        // Partials are disposable: drop on contention rather than queueing. Claiming the slot
+        // happens in the same synchronous step as the check, so it can't race a concurrent final.
         guard !transcriptionInFlight else { return }
+        transcriptionInFlight = true
+        defer { transcriptionInFlight = false }
+
         do {
             let text = try await transcribe(samples: samples)
             guard !text.isEmpty else { return }
@@ -208,7 +216,9 @@ final class LocalWhisperService: ObservableObject {
 
     private func transcribeFinal(samples: [Float], speaker: TranscriptSpeaker) async {
         // Finals are never dropped: wait out any in-flight partial/final before running.
-        await waitUntilTranscriberFree()
+        await claimTranscriber()
+        defer { transcriptionInFlight = false }
+
         do {
             let text = try await transcribe(samples: samples)
             publish(text: text, speaker: speaker, isFinal: true)
@@ -217,10 +227,17 @@ final class LocalWhisperService: ObservableObject {
         }
     }
 
-    private func waitUntilTranscriberFree() async {
+    /// Waits for the single shared WhisperKit instance and claims it.
+    ///
+    /// The claim must happen in the same synchronous step that observes the flag as free —
+    /// previously the flag was only set inside `transcribe`, one `await` later, so a mic final and
+    /// a system final could both clear the wait and then run `whisperKit.transcribe` concurrently
+    /// on one instance.
+    private func claimTranscriber() async {
         while transcriptionInFlight {
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
+        transcriptionInFlight = true
     }
 
     private func publish(text: String, speaker: TranscriptSpeaker, isFinal: Bool) {
@@ -232,12 +249,10 @@ final class LocalWhisperService: ObservableObject {
     }
 
     private func transcribe(samples: [Float]) async throws -> String {
+        // Callers own `transcriptionInFlight` — see `claimTranscriber()`.
         guard let whisperKit else {
             throw LocalWhisperError.transcriptionFailed("WhisperKit not initialized")
         }
-
-        transcriptionInFlight = true
-        defer { transcriptionInFlight = false }
 
         let options = DecodingOptions(
             task: .transcribe,

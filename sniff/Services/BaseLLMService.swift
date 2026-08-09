@@ -1,9 +1,5 @@
-//
-//  BaseLLMService.swift
-//  sniff
-//
-
 import Foundation
+
 
 class BaseLLMService: LLMService {
     let apiKey: String

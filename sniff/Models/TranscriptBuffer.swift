@@ -1,11 +1,5 @@
-//
-//  TranscriptBuffer.swift
-//  sniff
-//
-//  Created by Piyushh Bhutoria on 15/01/26.
-//
-
 import Foundation
+
 import Combine
 
 private struct TranscriptChunk: Equatable {

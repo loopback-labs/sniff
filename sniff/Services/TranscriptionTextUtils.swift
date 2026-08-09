@@ -1,9 +1,5 @@
-//
-//  TranscriptionTextUtils.swift
-//  sniff
-//
-
 import Foundation
+
 
 enum TranscriptionTextUtils {
   static func rootMeanSquare(of samples: [Float]) -> Float {

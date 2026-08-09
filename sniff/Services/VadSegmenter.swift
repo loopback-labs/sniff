@@ -1,9 +1,5 @@
-//
-//  VadSegmenter.swift
-//  sniff
-//
-
 import AVFoundation
+
 import Foundation
 import FluidAudio
 

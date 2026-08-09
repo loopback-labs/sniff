@@ -1,11 +1,5 @@
-//
-//  OverlayWindow.swift
-//  sniff
-//
-//  Created by Piyushh Bhutoria on 15/01/26.
-//
-
 import AppKit
+
 
 class OverlayWindow: NSPanel {
     /// SwiftUI `.global`-space rects (top-left origin) of the controls that should stay clickable.

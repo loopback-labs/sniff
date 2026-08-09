@@ -1,9 +1,5 @@
-//
-//  ModelDownloadManager.swift
-//  sniff
-//
-
 import Combine
+
 import Foundation
 
 /// What a download is currently doing. Drives the row's caption text.

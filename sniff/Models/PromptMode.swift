@@ -1,9 +1,5 @@
-//
-//  PromptMode.swift
-//  sniff
-//
-
 import Foundation
+
 
 struct LLMRequestOptions {
   let maxTokens: Int
@@ -173,7 +169,6 @@ enum PromptMode: CaseIterable {
     }
   }
 
-  /// The QAItem source tag recorded for items produced by this mode.
   var questionSource: QuestionSource {
     switch self {
     case .answerQuestion: return .manual

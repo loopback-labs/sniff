@@ -1,8 +1,5 @@
-//
-//  AppDelegate.swift
-//  sniff
-
 import AppKit
+
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -19,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     Task { @MainActor in
       await AppDelegate.coordinator?.evaluatePermissionOnboardingAtLaunch()
     }
+
 
     // Recheck permissions whenever ANY app becomes active.
     // This reliably catches the case where the user returns from System Settings

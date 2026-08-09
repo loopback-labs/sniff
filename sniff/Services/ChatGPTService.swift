@@ -1,9 +1,5 @@
-//
-//  ChatGPTService.swift
-//  sniff
-//
-
 import Foundation
+
 
 final class ChatGPTService: LLMService {
   private let model: String

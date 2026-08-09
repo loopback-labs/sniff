@@ -1,11 +1,5 @@
-//
-//  QuestionDetectionService.swift
-//  sniff
-//
-//  Created by Piyushh Bhutoria on 15/01/26.
-//
-
 import Foundation
+
 
 class QuestionDetectionService {
     private enum Constants {

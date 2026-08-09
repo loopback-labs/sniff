@@ -1,9 +1,5 @@
-//
-//  OpenAIService.swift
-//  sniff
-//
-
 import Foundation
+
 
 class OpenAIService: BaseLLMService {
     private let model: String

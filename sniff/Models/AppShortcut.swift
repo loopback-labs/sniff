@@ -1,9 +1,5 @@
-//
-//  AppShortcut.swift
-//  sniff
-//
-
 import Foundation
+
 
 /// Display catalog of Sniff's global hotkeys, for the Shortcuts tab in Settings.
 ///

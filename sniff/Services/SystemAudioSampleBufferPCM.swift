@@ -1,9 +1,5 @@
-//
-//  SystemAudioSampleBufferPCM.swift
-//  sniff
-//
-//  Shared ScreenCaptureKit → mono float PCM extraction for transcription backends.
-//
+/// Shared ScreenCaptureKit → mono float PCM extraction for transcription backends.
+
 
 import CoreMedia
 import CoreAudio

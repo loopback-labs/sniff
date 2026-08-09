@@ -1,13 +1,5 @@
-//
-//  OverlayContentView.swift
-//  sniff
-//
-//  Created by Piyushh Bhutoria on 15/01/26.
-//
-
 import SwiftUI
 
-// Wrapper that applies config-based styling
 struct QAOverlayContent: View {
     @ObservedObject var qaManager: QAManager
     
@@ -21,7 +13,6 @@ struct QAOverlayContent: View {
     }
 }
 
-// Pure content view - just the Q&A display logic
 struct QAContentView: View {
     @ObservedObject var qaManager: QAManager
     @EnvironmentObject var coordinator: AppCoordinator

@@ -1,9 +1,5 @@
-//
-//  LLMModelCatalog.swift
-//  sniff
-//
-
 import Foundation
+
 
 struct LLMModelOption: Identifiable, Hashable {
   let id: String

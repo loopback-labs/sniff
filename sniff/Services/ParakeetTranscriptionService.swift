@@ -8,11 +8,14 @@ final class ParakeetTranscriptionService: ObservableObject {
     @Published var micUpdate: TranscriptionUpdate = TranscriptionUpdate(text: "", isFinal: true)
     @Published var systemUpdate: TranscriptionUpdate = TranscriptionUpdate(text: "", isFinal: true)
     @Published var isCapturing: Bool = false
+    /// Smoothed 0...1 microphone peak, so the UI can show that audio is actually arriving.
+    @Published private(set) var micLevel: Float = 0
 
     private let audioEngine = AVAudioEngine()
     private lazy var micSampleBridge = MicSampleBridge(label: "com.sniff.parakeet.mic") { [weak self] samples in
         Task { @MainActor [weak self] in
             guard let self, self.capturingInternal else { return }
+            self.micLevel = AudioLevelMeter.next(level: self.micLevel, samples: samples)
             self.micFeedContinuation?.yield(samples)
         }
     }
@@ -35,15 +38,15 @@ final class ParakeetTranscriptionService: ObservableObject {
     private var systemFeedContinuation: AsyncStream<[Float]>.Continuation?
     private var systemFeedTask: Task<Void, Never>?
 
-    func reset() {
+    /// Awaited rather than fire-and-forget: the previous implementation kicked off streamer resets
+    /// in a detached `Task`, so `startCapture()` could begin feeding audio before the reset landed
+    /// and the first utterance of a session got wiped mid-flight.
+    func reset() async {
         micUpdate = TranscriptionUpdate(text: "", isFinal: true)
         systemUpdate = TranscriptionUpdate(text: "", isFinal: true)
-        let mic = micStreamer
-        let system = systemStreamer
-        Task {
-            await mic?.reset()
-            await system?.reset()
-        }
+        micLevel = 0
+        await micStreamer?.reset()
+        await systemStreamer?.reset()
     }
 
     func configure(modelChoice: ParakeetModelChoice) {
@@ -63,6 +66,12 @@ final class ParakeetTranscriptionService: ObservableObject {
 
         do {
             try await ensureManagersLoaded()
+            // Clear decoder/EOU/encoder-cache state before any audio flows. `finish()` (used on
+            // stop) empties the token accumulators but leaves `eouDetected` latched true, and a
+            // latched streamer never fires another end-of-utterance — so without this a second
+            // session would stream partials forever and never commit a line to the transcript.
+            await micStreamer?.reset()
+            await systemStreamer?.reset()
             startFeedLoop(for: .you)
             startFeedLoop(for: .others)
             try startMicCapture()
@@ -119,16 +128,15 @@ final class ParakeetTranscriptionService: ObservableObject {
                 self?.publish(text: text, speaker: speaker, isFinal: false)
             }
         }
-        await manager.setEouCallback { [weak self] text in
+        await manager.setEouCallback { [weak self, weak manager] text in
+            // The manager latches EOU until reset, and anything decoded before the reset lands is
+            // folded into the finished utterance and then discarded. So the reset goes straight
+            // back to the streamer actor instead of hopping via the main actor first (as it used
+            // to) — that turned a one-hop window into a main-actor round trip, long enough to swallow
+            // the opening words of the next utterance during continuous speech.
+            Task { await manager?.reset() }
             Task { @MainActor [weak self] in
                 self?.publish(text: text, speaker: speaker, isFinal: true)
-                // The manager only fires EOU once per session until reset — clear its decoder/EOU
-                // state now so the next utterance starts fresh. There's a small window where audio
-                // arriving between the EOU firing and this reset landing is processed against stale
-                // state; the debounced silence EOU requires (>=1280ms by default) makes that window
-                // rare in practice for live speech.
-                let streamer = speaker == .you ? self?.micStreamer : self?.systemStreamer
-                await streamer?.reset()
             }
         }
 

@@ -1,9 +1,5 @@
-//
-//  StyledOverlayView.swift
-//  sniff
-//
-
 import SwiftUI
+
 import AppKit
 
 /// Global-space frames of controls that should stay clickable while the rest of the

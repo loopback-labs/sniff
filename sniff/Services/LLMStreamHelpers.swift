@@ -1,9 +1,5 @@
-//
-//  LLMStreamHelpers.swift
-//  sniff
-//
-
 import Foundation
+
 
 enum LLMStreamHelpers {
   static func sseDataPayload(from line: String) -> String? {

@@ -1,9 +1,5 @@
-//
-//  WindowConfiguration.swift
-//  sniff
-//
-
 import AppKit
+
 
 struct WindowConfiguration {
     let name: String

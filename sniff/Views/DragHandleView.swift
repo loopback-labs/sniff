@@ -1,11 +1,5 @@
-//
-//  DragHandleView.swift
-//  sniff
-//
-//  Created by Piyushh Bhutoria on 21/01/26.
-//
-
 import SwiftUI
+
 import AppKit
 
 struct WindowKey: EnvironmentKey {

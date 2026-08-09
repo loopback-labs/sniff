@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TranscriptOverlayContentView: View {
     @ObservedObject var transcriptBuffer: TranscriptBuffer
+    @EnvironmentObject var coordinator: AppCoordinator
 
     var body: some View {
         StyledOverlayView(
@@ -10,20 +11,19 @@ struct TranscriptOverlayContentView: View {
             iconColor: .green
         ) {
             VStack(spacing: 6) {
+                if coordinator.systemAudioUnavailable {
+                    CaptureWarningView(
+                        title: "Only your microphone is being transcribed",
+                        detail: coordinator.systemAudioFailureReason
+                            ?? "System audio capture is unavailable."
+                    )
+                }
+
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 8) {
                             if transcriptBuffer.displayChunks.isEmpty {
-                                VStack(spacing: 6) {
-                                    Image(systemName: "waveform.badge.mic")
-                                        .font(.title3)
-                                        .foregroundStyle(.tertiary)
-                                    Text("Listening…")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 20)
+                                ListeningPlaceholderView(micLevel: coordinator.micLevel)
                             } else {
                                 ForEach(transcriptBuffer.displayChunks) { chunk in
                                     ChatBubbleView(
@@ -57,7 +57,80 @@ struct TranscriptOverlayContentView: View {
 
     private func isChunkHighlighted(_ chunk: TranscriptDisplayChunk) -> Bool {
         guard let question = transcriptBuffer.latestQuestion else { return false }
-        return chunk.text.localizedCaseInsensitiveContains(question)
+        // Only highlight a chunk that is essentially *just* the question. The detected question is
+        // often most of the recent transcript, so a bare `contains` painted whole bubbles yellow.
+        guard chunk.text.localizedCaseInsensitiveContains(question) else { return false }
+        return Double(question.count) >= Double(chunk.text.count) * 0.6
+    }
+}
+
+/// Inline warning strip for degraded-capture states that would otherwise be invisible.
+private struct CaptureWarningView: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 6)
+    }
+}
+
+/// Empty-transcript state. Shows a live input meter so "capturing but hearing nothing" (muted mic,
+/// wrong input device) is visibly different from "capturing and waiting for speech".
+private struct ListeningPlaceholderView: View {
+    let micLevel: Float
+
+    /// Don't accuse the mic of being dead before audio has had a chance to arrive — the first
+    /// buffers land a beat after capture starts.
+    @State private var graceElapsed = false
+
+    private var isSilent: Bool { graceElapsed && micLevel < AudioLevelMeter.silenceThreshold }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: isSilent ? "mic.slash" : "waveform.badge.mic")
+                .font(.title3)
+                .foregroundStyle(isSilent ? AnyShapeStyle(.tertiary) : AnyShapeStyle(Color.green))
+
+            Text(isSilent ? "No microphone input detected" : "Listening…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ProgressView(value: Double(min(max(micLevel * 3, 0), 1)))
+                .progressViewStyle(.linear)
+                .tint(isSilent ? .secondary : .green)
+                .frame(width: 120)
+
+            if isSilent {
+                Text("Check the input device in Settings › Speech.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
+        .animation(.easeOut(duration: 0.2), value: isSilent)
+        .task {
+            try? await Task.sleep(for: .seconds(4))
+            graceElapsed = true
+        }
     }
 }
 
@@ -158,6 +231,7 @@ struct ChatBubbleView: View {
     buffer.commitPending(text: "It should stream quickly and be accurate.", speaker: .others)
     buffer.updateLatestQuestion("What is the best way to test a whisper model?")
     return TranscriptOverlayContentView(transcriptBuffer: buffer)
+        .environmentObject(AppCoordinator())
         .frame(width: 360, height: 220)
         .padding()
 }

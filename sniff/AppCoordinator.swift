@@ -1,11 +1,5 @@
-//
-//  AppCoordinator.swift
-//  sniff
-//
-//  Created by Piyushh Bhutoria on 15/01/26.
-//
-
 import SwiftUI
+
 import AppKit
 import Combine
 import CoreGraphics
@@ -91,9 +85,24 @@ class AppCoordinator: NSObject, ObservableObject {
             updateOverlayVisibility()
         }
     }
+    /// Whether the selected provider can actually be called: a key in the Keychain, or a live
+    /// ChatGPT session. Published so the onboarding AI step enables "Continue" the moment a key is
+    /// saved, and recomputed in `rebuildLLMService()` — the one funnel every credential change
+    /// already goes through.
+    @Published private(set) var hasLLMCredential = false
+
     @Published var askComposerFocusToken = UUID()
     @Published var isAskComposerFocused = false
     @Published var overlaysForceInteractive = false
+
+    /// True when capture started but ScreenCaptureKit wouldn't give us system audio, so only the
+    /// microphone is being transcribed. Surfaced in the transcript overlay — this used to be a
+    /// `print`, which meant the other side of a call silently never appeared.
+    @Published private(set) var systemAudioUnavailable = false
+    /// Why system audio is unavailable, shown in the overlay banner so the fix is actionable.
+    @Published private(set) var systemAudioFailureReason: String?
+    /// Mirrors the active engine's microphone peak so the overlay can show input is arriving.
+    @Published private(set) var micLevel: Float = 0
 
     private var clickThroughTimer: Timer?
 
@@ -145,6 +154,9 @@ class AppCoordinator: NSObject, ObservableObject {
             keychain: keychainService,
             chatGPTAuth: chatGPTAuthManager
         )
+        hasLLMCredential = selectedProvider.usesOAuth
+            ? chatGPTAuthManager.isSignedIn
+            : !(keychainService.getAPIKey(for: selectedProvider) ?? "").isEmpty
     }
 
     private func resolvedModelId() -> String {
@@ -155,6 +167,7 @@ class AppCoordinator: NSObject, ObservableObject {
 
     private struct SpeechEngineRouting {
         let sourcePublishers: [(speaker: TranscriptSpeaker, publisher: AnyPublisher<TranscriptionUpdate, Never>)]
+        let micLevelPublisher: AnyPublisher<Float, Never>
         let startCapture: () async throws -> Void
     }
 
@@ -166,6 +179,7 @@ class AppCoordinator: NSObject, ObservableObject {
                     (.you, localWhisperService.$micUpdate.eraseToAnyPublisher()),
                     (.others, localWhisperService.$systemUpdate.eraseToAnyPublisher())
                 ],
+                micLevelPublisher: localWhisperService.$micLevel.eraseToAnyPublisher(),
                 startCapture: { [weak self] in
                     guard let self else { throw CancellationError() }
                     self.configureWhisperService()
@@ -178,6 +192,7 @@ class AppCoordinator: NSObject, ObservableObject {
                     (.you, parakeetService.$micUpdate.eraseToAnyPublisher()),
                     (.others, parakeetService.$systemUpdate.eraseToAnyPublisher())
                 ],
+                micLevelPublisher: parakeetService.$micLevel.eraseToAnyPublisher(),
                 startCapture: { [weak self] in
                     guard let self else { throw CancellationError() }
                     self.configureParakeetService()
@@ -211,7 +226,7 @@ class AppCoordinator: NSObject, ObservableObject {
         await stopSpeechCapture(finalizeSystem: false)
         await screenCaptureService.stopCapture()
         localWhisperService.reset()
-        parakeetService.reset()
+        await parakeetService.reset()
         cancellables.removeAll()
         setupSubscriptions()
         do {
@@ -221,11 +236,17 @@ class AppCoordinator: NSObject, ObservableObject {
                     enableSystemAudio: true,
                     audioSampleHandler: makeSystemAudioHandler(for: engineForSystemAudio)
                 )
+                systemAudioUnavailable = false
+                systemAudioFailureReason = nil
             } catch {
                 print("⚠️ System audio capture unavailable after restart; continuing with microphone-only transcription: \(error)")
+                systemAudioUnavailable = true
+                systemAudioFailureReason = error.localizedDescription
             }
         } catch {
             print("Failed to restart speech capture: \(error)")
+            presentStartFailure(error)
+            await stop()
         }
     }
 
@@ -238,7 +259,14 @@ class AppCoordinator: NSObject, ObservableObject {
     }
 
     private func setupSubscriptions() {
-        let sourcePublishers = speechRouting(for: selectedSpeechEngine).sourcePublishers
+        let routing = speechRouting(for: selectedSpeechEngine)
+        let sourcePublishers = routing.sourcePublishers
+
+        routing.micLevelPublisher
+            .receive(on: RunLoop.main)
+            .sink { [weak self] level in self?.micLevel = level }
+            .store(in: &cancellables)
+
         let mergedPublisher = Publishers.MergeMany(sourcePublishers.map { $0.publisher })
             .receive(on: RunLoop.main)
             .share()
@@ -330,11 +358,14 @@ class AppCoordinator: NSObject, ObservableObject {
         
         transcriptBuffer.clear()
         localWhisperService.reset()
-        parakeetService.reset()
+        await parakeetService.reset()
+        systemAudioUnavailable = false
+        systemAudioFailureReason = nil
+        micLevel = 0
         transcriptBuffer.startSession(saveDirectoryURL: Self.transcriptSaveDirectory)
         audioQuestionPipeline.reset()
         setupSubscriptions()
-        
+
         do {
             try await startSpeechCapture(using: selectedSpeechEngine)
             do {
@@ -342,8 +373,12 @@ class AppCoordinator: NSObject, ObservableObject {
                     enableSystemAudio: true,
                     audioSampleHandler: makeSystemAudioHandler(for: selectedSpeechEngine)
                 )
+                systemAudioUnavailable = false
+                systemAudioFailureReason = nil
             } catch {
                 print("⚠️ Screen/system audio capture unavailable; continuing with microphone-only transcription: \(error)")
+                systemAudioUnavailable = true
+                systemAudioFailureReason = error.localizedDescription
             }
 
             createQAOverlayWindow()
@@ -357,6 +392,28 @@ class AppCoordinator: NSObject, ObservableObject {
             await stopSpeechCapture(finalizeSystem: false)
             cancellables.removeAll()
             transcriptBuffer.stopSession()
+            // Previously this failed silently: the menu item flipped back to "Start" with no
+            // explanation, which is indistinguishable from transcription just not working.
+            presentStartFailure(error)
+        }
+    }
+
+    /// Surfaces a hard capture-startup failure. Model load errors, a missing input device, or a
+    /// revoked permission all land here, and all of them look like "nothing happens" otherwise.
+    private func presentStartFailure(_ error: Error) {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Sniff couldn't start listening"
+        alert.informativeText = """
+            \(error.localizedDescription)
+
+            Check the transcription model and input device in Settings, then try again.
+            """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            showSettingsWindow()
         }
     }
     
@@ -387,6 +444,14 @@ class AppCoordinator: NSObject, ObservableObject {
         isRunning = false
     }
     
+    /// The model the selected engine will actually load, across both engines.
+    var selectedSpeechModel: SpeechModel {
+        switch selectedSpeechEngine {
+        case .whisper: return .whisper(selectedWhisperModelID)
+        case .parakeet: return .parakeet(selectedParakeetModelChoice)
+        }
+    }
+
     /// Both engines now require an explicit model download (Settings > Speech, or the
     /// transcription-model onboarding step) before capture can start.
     func needsTranscriptionModelSetup() -> Bool {
@@ -398,6 +463,31 @@ class AppCoordinator: NSObject, ObservableObject {
         }
     }
 
+    func onboardingReadiness() -> OnboardingReadiness {
+        OnboardingReadiness(
+            permissionsGranted: appPermissions.allGranted,
+            speechModelInstalled: !needsTranscriptionModelSetup(),
+            llmCredentialReady: hasLLMCredential
+        )
+    }
+
+    var hasCompletedOnboarding: Bool {
+        UserDefaults.standard.bool(forKey: UserDefaultsKeys.onboardingCompleted)
+    }
+
+    /// Onboarding is due until the user has walked the flow once, even if permissions and a model
+    /// happen to be in place — that's what gets a new user to the AI-provider step instead of
+    /// discovering the gap when their first question fails.
+    var needsOnboarding: Bool {
+        !appPermissions.allGranted || needsTranscriptionModelSetup() || !hasCompletedOnboarding
+    }
+
+    func completeOnboarding() {
+        UserDefaults.standard.set(true, forKey: UserDefaultsKeys.onboardingCompleted)
+    }
+
+    /// Capture itself only needs permissions and a speech model — a missing API key is recoverable
+    /// (transcripts still work), so it doesn't block starting a session.
     func requestPermissions() async -> Bool {
         await appPermissions.refreshAccurate()
         if appPermissions.allGranted && !needsTranscriptionModelSetup() { return true }
@@ -409,10 +499,18 @@ class AppCoordinator: NSObject, ObservableObject {
         // Give TCC daemon extra time to initialise on macOS 26 before querying.
         try? await Task.sleep(for: .milliseconds(500))
         await appPermissions.refreshAccurate()
-        if appPermissions.allGranted && !needsTranscriptionModelSetup() {
-            dismissOnboardingIfComplete()
-        } else {
+        modelDownloads.refreshInstalled()
+
+        // Installs that were already fully configured before this flow existed shouldn't be walked
+        // through it — mark them done rather than interrupting a working setup.
+        if !hasCompletedOnboarding && onboardingReadiness().isComplete {
+            completeOnboarding()
+        }
+
+        if needsOnboarding {
             presentPermissionOnboardingWindow()
+        } else {
+            dismissOnboardingIfComplete()
         }
     }
 
@@ -425,7 +523,7 @@ class AppCoordinator: NSObject, ObservableObject {
         }
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 650),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 640),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -450,8 +548,10 @@ class AppCoordinator: NSObject, ObservableObject {
         permissionOnboardingWindow = nil
     }
 
+    /// Closes the window when it was only up as a permission nag. Once the flow itself is running,
+    /// granting a permission advances a step instead of yanking the window away mid-setup.
     func dismissOnboardingIfComplete() {
-        guard appPermissions.allGranted, !needsTranscriptionModelSetup() else { return }
+        guard hasCompletedOnboarding, !needsOnboarding else { return }
         permissionOnboardingWindow?.close()
         permissionOnboardingWindow = nil
     }
@@ -468,13 +568,20 @@ class AppCoordinator: NSObject, ObservableObject {
         let config = WindowConfiguration.transcript
         transcriptOverlayWindow = createWindow(config: config) {
             TranscriptOverlayContentView(transcriptBuffer: transcriptBuffer)
+                .environmentObject(self)
         }
     }
     
     private func createWindow<Content: View>(config: WindowConfiguration, @ViewBuilder content: () -> Content) -> NSWindow {
         let window = OverlayWindow(config: config)
         window.setScreenshotInclusion(showOverlay)
-        window.contentView = NSHostingView(rootView: content().environment(\.overlayWindow, window))
+        let hostingView = NSHostingView(rootView: content().environment(\.overlayWindow, window))
+        // Keep the window at its configured size instead of letting SwiftUI's fitting size drive
+        // it. With the default sizing options, wrapping text measured against an unconstrained
+        // width reports an enormous height and the overlay grows far past its `WindowConfiguration`
+        // (the transcript window was resizing itself to thousands of points tall).
+        hostingView.sizingOptions = []
+        window.contentView = hostingView
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         

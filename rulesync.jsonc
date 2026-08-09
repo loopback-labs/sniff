@@ -2,11 +2,11 @@
   "$schema": "https://github.com/dyoshikawa/rulesync/releases/latest/download/config-schema.json",
   "targets": [
     "claudecode",
-    "codexcli"
+    "codexcli",
+    "antigravity-cli"
   ],
   "features": [
     "rules",
-    "ignore",
     "mcp",
     "commands",
     "subagents",

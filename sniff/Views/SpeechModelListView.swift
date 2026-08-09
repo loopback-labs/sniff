@@ -1,9 +1,5 @@
-//
-//  SpeechModelListView.swift
-//  sniff
-//
-
 import SwiftUI
+
 
 /// Download/select rows for an engine's on-device models. Shared by `SettingsView` (Speech tab)
 /// and `TranscriptionModelOnboardingView` so the download UX is identical in both places.

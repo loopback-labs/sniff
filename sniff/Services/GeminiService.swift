@@ -1,9 +1,5 @@
-//
-//  GeminiService.swift
-//  sniff
-//
-
 import Foundation
+
 
 class GeminiService: BaseLLMService {
     private let model: String

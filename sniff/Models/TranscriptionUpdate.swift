@@ -1,9 +1,5 @@
-//
-//  TranscriptionUpdate.swift
-//  sniff
-//
-
 import Foundation
+
 
 /// A live transcription update for one speaker's in-progress or just-finished utterance.
 ///

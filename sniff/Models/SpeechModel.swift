@@ -1,9 +1,5 @@
-//
-//  SpeechModel.swift
-//  sniff
-//
-
 import Foundation
+
 
 /// One downloadable on-device speech model, across both engines.
 ///

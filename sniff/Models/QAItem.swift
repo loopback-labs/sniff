@@ -1,11 +1,5 @@
-//
-//  QAItem.swift
-//  sniff
-//
-//  Created by Piyushh Bhutoria on 15/01/26.
-//
-
 import Foundation
+
 
 struct QAItem: Identifiable, Equatable {
     let id: UUID

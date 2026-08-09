@@ -1,7 +1,3 @@
-//
-//  AppPermissions.swift
-//  sniff
-
 import AppKit
 import ApplicationServices
 import AVFAudio

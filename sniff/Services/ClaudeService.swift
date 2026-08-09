@@ -1,9 +1,5 @@
-//
-//  ClaudeService.swift
-//  sniff
-//
-
 import Foundation
+
 
 class ClaudeService: BaseLLMService {
     private let model: String

@@ -1,8 +1,3 @@
-//
-//  ChatGPTAuthManager.swift
-//  sniff
-//
-
 import AppKit
 import Combine
 import CryptoKit

@@ -1,11 +1,5 @@
-//
-//  QADisplayView.swift
-//  sniff
-//
-//  Created by Piyushh Bhutoria on 15/01/26.
-//
-
 import SwiftUI
+
 import Textual
 
 struct QADisplayView: View {

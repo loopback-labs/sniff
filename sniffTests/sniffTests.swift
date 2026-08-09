@@ -1,10 +1,3 @@
-//
-//  sniffTests.swift
-//  sniffTests
-//
-//  Created by Piyushh Bhutoria on 15/01/26.
-//
-
 import Foundation
 import Combine
 import Testing
@@ -550,5 +543,81 @@ struct sniffTests {
         let payload = builder.build(mode: .ask, transcript: buffer, qaHistory: [], typedText: "What time is it?")
 
         #expect(payload.userMessage.contains("Question: What time is it?"))
+    }
+
+    // MARK: - Onboarding flow
+
+    @Test func onboardingStartsAtWelcomeOnAFreshInstall() {
+        let readiness = OnboardingReadiness(
+            permissionsGranted: false,
+            speechModelInstalled: false,
+            llmCredentialReady: false
+        )
+
+        #expect(readiness.isUntouched)
+        #expect(OnboardingStep.initial(for: readiness) == .welcome)
+    }
+
+    @Test func onboardingResumesAtTheFirstMissingRequirement() {
+        let missingModel = OnboardingReadiness(
+            permissionsGranted: true,
+            speechModelInstalled: false,
+            llmCredentialReady: false
+        )
+        #expect(OnboardingStep.initial(for: missingModel) == .speech)
+
+        let missingCredential = OnboardingReadiness(
+            permissionsGranted: true,
+            speechModelInstalled: true,
+            llmCredentialReady: false
+        )
+        #expect(OnboardingStep.initial(for: missingCredential) == .ai)
+    }
+
+    /// A later requirement being met doesn't let an earlier gap be skipped.
+    @Test func onboardingResumesAtPermissionsEvenWhenLaterStepsAreDone() {
+        let readiness = OnboardingReadiness(
+            permissionsGranted: false,
+            speechModelInstalled: true,
+            llmCredentialReady: true
+        )
+
+        #expect(OnboardingStep.initial(for: readiness) == .permissions)
+    }
+
+    @Test func onboardingLandsOnReadyWhenEverythingIsConfigured() {
+        let readiness = OnboardingReadiness(
+            permissionsGranted: true,
+            speechModelInstalled: true,
+            llmCredentialReady: true
+        )
+
+        #expect(readiness.isComplete)
+        #expect(OnboardingStep.initial(for: readiness) == .ready)
+        #expect(OnboardingStep.firstIncomplete(for: readiness) == .ready)
+    }
+
+    @Test func onboardingBookendStepsNeverGateContinue() {
+        let readiness = OnboardingReadiness(
+            permissionsGranted: false,
+            speechModelInstalled: false,
+            llmCredentialReady: false
+        )
+
+        #expect(OnboardingStep.welcome.isSatisfied(by: readiness))
+        #expect(OnboardingStep.ready.isSatisfied(by: readiness))
+        #expect(!OnboardingStep.permissions.isSatisfied(by: readiness))
+        #expect(!OnboardingStep.speech.isSatisfied(by: readiness))
+        #expect(!OnboardingStep.ai.isSatisfied(by: readiness))
+    }
+
+    @Test func onboardingStepsAreLinkedInOrder() {
+        #expect(OnboardingStep.welcome.previous == nil)
+        #expect(OnboardingStep.ready.next == nil)
+        #expect(OnboardingStep.welcome.next == .permissions)
+        #expect(OnboardingStep.permissions.next == .speech)
+        #expect(OnboardingStep.speech.next == .ai)
+        #expect(OnboardingStep.ai.next == .ready)
+        #expect(OnboardingStep.ready.previous == .ai)
     }
 }

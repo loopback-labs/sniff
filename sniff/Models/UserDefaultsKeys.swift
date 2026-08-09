@@ -1,9 +1,5 @@
-//
-//  UserDefaultsKeys.swift
-//  sniff
-//
-
 import Foundation
+
 
 enum UserDefaultsKeys {
   static let selectedLLMProvider = "selectedLLMProvider"
@@ -13,6 +9,7 @@ enum UserDefaultsKeys {
   static let selectedAudioInputDeviceUID = "selectedAudioInputDeviceUID"
   static let whisperModelId = "whisperModelId"
   static let screenRecordingPromptRequested = "screenRecordingPromptRequested"
+  static let onboardingCompleted = "onboardingCompleted"
 
   static let llmModelIdPrefix = "llmModelId_"
 

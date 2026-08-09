@@ -1,11 +1,5 @@
-//
-//  SpeechEngine.swift
-//  sniff
-//
-//  Created by Piyushh Bhutoria on 04/02/26.
-//
-
 import Foundation
+
 
 enum SpeechEngine: String, CaseIterable, Identifiable {
     case whisper

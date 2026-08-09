@@ -1,9 +1,5 @@
-//
-//  PromptBuilder.swift
-//  sniff
-//
-
 import Foundation
+
 
 struct PromptPayload {
   let systemPrompt: String

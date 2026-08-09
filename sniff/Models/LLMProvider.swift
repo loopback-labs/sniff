@@ -1,9 +1,5 @@
-//
-//  LLMProvider.swift
-//  sniff
-//
-
 import Foundation
+
 
 enum LLMProvider: String, CaseIterable, Identifiable {
     case openai = "openai"
@@ -33,7 +29,6 @@ enum LLMProvider: String, CaseIterable, Identifiable {
         return "\(rawValue)_api_key"
     }
 
-    /// Where the user creates an API key for this provider, linked from Settings.
     var apiKeyURL: URL? {
         switch self {
         case .openai: return URL(string: "https://platform.openai.com/api-keys")
