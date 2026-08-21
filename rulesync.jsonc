@@ -8,7 +8,6 @@
   "features": [
     "rules",
     "mcp",
-    "commands",
     "subagents",
     "skills",
     "hooks",

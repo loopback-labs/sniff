@@ -16,9 +16,9 @@ struct LLMModelOption: Identifiable, Hashable {
 enum LLMModelCatalog {
   private static let openAIModelOptions: [LLMModelOption] = [
     // source: https://platform.openai.com/docs/models
-    LLMModelOption(id: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", supportsVision: true),
-    LLMModelOption(id: "gpt-5.6-terra", displayName: "GPT-5.6 Terra", supportsVision: true),
     LLMModelOption(id: "gpt-5.6-luna", displayName: "GPT-5.6 Luna", supportsVision: true),
+    LLMModelOption(id: "gpt-5.6-terra", displayName: "GPT-5.6 Terra", supportsVision: true),
+    LLMModelOption(id: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", supportsVision: true),
   ]
 
   private static let chatgptModelIds: Set<String> = [
@@ -37,17 +37,16 @@ enum LLMModelCatalog {
       return [
         // source: https://platform.claude.com/docs/en/about-claude/models/overview
         LLMModelOption(id: "claude-sonnet-5", displayName: "Sonnet 5", supportsVision: true),
-        LLMModelOption(id: "claude-opus-4-8", displayName: "Opus 4.8", supportsVision: true),
-        LLMModelOption(id: "claude-haiku-4-5-20251001", displayName: "Haiku 4.5", supportsVision: true),
-        LLMModelOption(id: "claude-fable-5", displayName: "Fable 5", supportsVision: true),
+        LLMModelOption(id: "claude-haiku-4-5", displayName: "Haiku 4.5", supportsVision: true),
+        LLMModelOption(id: "claude-opus-5", displayName: "Opus 5", supportsVision: true),
       ]
     case .gemini:
       return [
-        // Source: https://ai.google.dev/gemini-api/docs/pricing
-        LLMModelOption(id: "gemini-3.5-flash", displayName: "Gemini 3.5 Flash", supportsVision: true),
-        LLMModelOption(id: "gemini-2.5-pro", displayName: "Gemini 2.5 Pro", supportsVision: true),
+        // Source: https://ai.google.dev/gemini-api/docs/models
+        LLMModelOption(id: "gemini-3.5-flash-lite", displayName: "Gemini 3.5 Flash-Lite", supportsVision: true),
         LLMModelOption(id: "gemini-3.1-flash-lite", displayName: "Gemini 3.1 Flash-Lite", supportsVision: true),
-        LLMModelOption(id: "gemini-3.1-pro-preview", displayName: "Gemini 3.1 Pro Preview", supportsVision: true),
+        LLMModelOption(id: "gemini-3.7-flash", displayName: "Gemini 3.7 Flash", supportsVision: true),
+        LLMModelOption(id: "gemini-3.6-flash", displayName: "Gemini 3.6 Flash", supportsVision: true),
       ]
     }
   }

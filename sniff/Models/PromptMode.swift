@@ -66,7 +66,7 @@ enum PromptMode: CaseIterable {
         """
     case .solveScreen:
       return """
-        The screenshot contains a coding problem (LeetCode-style, take-home, or shared editor). \
+        The screenshot contains a coding problem. \
         Read the ENTIRE problem carefully, including constraints, input ranges, and examples — \
         constraints determine the required algorithm.
 

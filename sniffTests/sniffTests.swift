@@ -376,18 +376,18 @@ struct sniffTests {
     }
 
     @Test func claudeServiceParsesStreamLine() {
-        let service = ClaudeService(apiKey: "test", model: "claude-sonnet-4-6")
+        let service = ClaudeService(apiKey: "test", model: "claude-sonnet-5")
         let line = "data: {\"delta\":{\"text\":\"Hello\"}}"
         #expect(service.parseStreamLine(line) == "Hello")
         #expect(service.isStreamDone("[DONE]") == false)
     }
 
     @Test func geminiServiceParsesStreamLineAndBuildURL() {
-        let service = GeminiService(apiKey: "abc123", model: "gemini-2.5-flash")
+        let service = GeminiService(apiKey: "abc123", model: "gemini-3.5-flash-lite")
         let line = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi\"}]}}]}"
         #expect(service.parseStreamLine(line) == "Hi")
         #expect(service.buildURL()?.absoluteString.contains("key=abc123") == true)
-        #expect(service.buildURL()?.absoluteString.contains("gemini-2.5-flash") == true)
+        #expect(service.buildURL()?.absoluteString.contains("gemini-3.5-flash-lite") == true)
     }
 
     // MARK: - Transcription / stream helpers
