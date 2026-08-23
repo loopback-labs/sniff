@@ -45,10 +45,6 @@ final class ModelDownloadManager: ObservableObject {
 
   // MARK: - Queries
 
-  func isDownloading(_ model: SpeechModel) -> Bool {
-    tasks[model] != nil
-  }
-
   func isInstalled(_ model: SpeechModel) -> Bool {
     installed.contains(model)
   }
@@ -59,10 +55,6 @@ final class ModelDownloadManager: ObservableObject {
     return engines
       .flatMap { SpeechModel.all(for: $0) }
       .filter { tasks[$0] != nil }
-  }
-
-  var hasActiveDownloads: Bool {
-    !tasks.isEmpty
   }
 
   // MARK: - Installed state

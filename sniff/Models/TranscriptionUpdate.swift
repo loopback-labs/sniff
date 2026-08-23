@@ -7,9 +7,6 @@ import Foundation
 /// full text of the *current* utterance rather than an appended delta — callers should
 /// replace, not concatenate, on every update until `isFinal` arrives.
 struct TranscriptionUpdate: Equatable {
-    /// Full text of the current utterance. May be revised across successive updates
-    /// while `isFinal` is false.
     var text: String
-    /// True once the engine has committed this utterance (e.g. end-of-utterance detected).
     var isFinal: Bool
 }

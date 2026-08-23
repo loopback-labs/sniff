@@ -18,10 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
 
-    // Recheck permissions whenever ANY app becomes active.
-    // This reliably catches the case where the user returns from System Settings
-    // after enabling the Screen & System Audio Recording toggle, which does not
-    // always trigger applicationDidBecomeActive for LSUIElement apps.
+    // Rechecking on ANY app activation reliably catches the user returning from System
+    // Settings after enabling Screen & System Audio Recording, which does not always
+    // trigger applicationDidBecomeActive for LSUIElement apps.
     appActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
       forName: NSWorkspace.didActivateApplicationNotification,
       object: nil,

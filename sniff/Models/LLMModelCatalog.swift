@@ -5,11 +5,21 @@ struct LLMModelOption: Identifiable, Hashable {
   let id: String
   let displayName: String
   let supportsVision: Bool
+  /// Whether the model accepts a thinking/reasoning-effort parameter. Legacy reasoning models that
+  /// only take a fixed token budget count as false — the budget floor (1024) exceeds the token cap
+  /// of the shortest prompt modes, so there is nothing sensible to send.
+  let supportsThinkingLevel: Bool
 
-  init(id: String, displayName: String? = nil, supportsVision: Bool) {
+  init(
+    id: String,
+    displayName: String? = nil,
+    supportsVision: Bool,
+    supportsThinkingLevel: Bool = true
+  ) {
     self.id = id
     self.displayName = displayName ?? id
     self.supportsVision = supportsVision
+    self.supportsThinkingLevel = supportsThinkingLevel
   }
 }
 
@@ -37,7 +47,12 @@ enum LLMModelCatalog {
       return [
         // source: https://platform.claude.com/docs/en/about-claude/models/overview
         LLMModelOption(id: "claude-sonnet-5", displayName: "Sonnet 5", supportsVision: true),
-        LLMModelOption(id: "claude-haiku-4-5", displayName: "Haiku 4.5", supportsVision: true),
+        LLMModelOption(
+          id: "claude-haiku-4-5",
+          displayName: "Haiku 4.5",
+          supportsVision: true,
+          supportsThinkingLevel: false
+        ),
         LLMModelOption(id: "claude-opus-5", displayName: "Opus 5", supportsVision: true),
       ]
     case .gemini:
@@ -55,8 +70,17 @@ enum LLMModelCatalog {
     models(for: provider).first?.id ?? openAIModelOptions.first?.id ?? "gpt-5.6-luna"
   }
 
+  /// Falls back to the provider's default rather than returning nil so callers never have to decide
+  /// what an unrecognized model id means — the caller already resolved it through this catalog.
+  static func option(provider: LLMProvider, modelId: String) -> LLMModelOption {
+    let options = models(for: provider)
+    return options.first(where: { $0.id == modelId })
+      ?? options.first
+      ?? LLMModelOption(id: modelId, supportsVision: false, supportsThinkingLevel: false)
+  }
+
   static func supportsVision(provider: LLMProvider, modelId: String) -> Bool {
-    models(for: provider).first(where: { $0.id == modelId })?.supportsVision ?? false
+    option(provider: provider, modelId: modelId).supportsVision
   }
 
   static func isValidModelId(_ modelId: String, for provider: LLMProvider) -> Bool {

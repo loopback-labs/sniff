@@ -379,11 +379,6 @@ final class LocalWhisperService: ObservableObject {
         return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 
-    static func estimatedSizeString(for modelName: String) -> String? {
-        guard let bytes = estimatedModelSizes[normalizedModelID(from: modelName)] else { return nil }
-        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
-    }
-
     private static func downloadedModelPathMap() -> [String: String] {
         UserDefaults.standard.dictionary(forKey: downloadedModelPathMapKey) as? [String: String] ?? [:]
     }

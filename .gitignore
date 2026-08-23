@@ -1,8 +1,9 @@
 # AI files
 .codex/
-AGENTS.md
+/AGENTS.md
 .agents/
 .claude
+/CLAUDE.md
 
 # Xcode
 xcuserdata/

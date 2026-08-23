@@ -119,9 +119,7 @@ final class TranscriptBuffer: ObservableObject {
         refreshDisplay()
     }
 
-    /// Finalizes `speaker`'s utterance: extracts complete sentences (persisting each), commits
-    /// any trailing remainder as its own chunk since no further revision will arrive for it,
-    /// and clears that speaker's pending text.
+    /// A trailing remainder is committed as its own chunk: no further revision will arrive for it.
     func commitPending(text: String, speaker: TranscriptSpeaker, at timestamp: Date = Date()) {
         defer {
             pendingBySpeaker.removeValue(forKey: speaker)
@@ -205,7 +203,6 @@ final class TranscriptBuffer: ObservableObject {
         return turns
     }
 
-    /// Full session transcript from disk, speaker-labeled and tail-truncated to `maxCharacters`. Returns nil if unavailable.
     func fullSessionTranscript(maxCharacters: Int) -> String? {
         guard let sessionURL, let raw = readTail(of: sessionURL, approximateCharacterBudget: maxCharacters) else {
             return nil

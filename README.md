@@ -9,10 +9,11 @@ Open-source macOS menu bar app in the spirit of tools like Cluely: it captures s
 ## Features
 
 - **Question detection** in live transcription (highlighted in the transcript; use **⌘⇧A** to send to the LLM)
-- **Six prompt modes**, each with its own tuned instructions, transcript budget, and token/temperature settings: answer a detected question, solve an on-screen problem, suggest what to say next, suggest follow-up questions, recap the conversation, and ask a free-form typed question
+- **Six prompt modes**, each with its own tuned instructions, transcript budget, and token limit: answer a detected question, solve an on-screen problem, suggest what to say next, suggest follow-up questions, recap the conversation, and ask a free-form typed question
 - **In-overlay ask composer** — type a question directly into the Q&A overlay (**⌘⇧K** to focus it) and get an answer grounded in the transcript and screen
 - **LLM providers:** OpenAI, Claude (Anthropic), Gemini (Google), and **ChatGPT** (session-based sign-in, not a stored API key)
 - **Per-provider model picker**, with a clear path to vision-capable models for screen questions
+- **Per-provider thinking level** (Low / Medium / High, default High) — how long the model reasons before answering, mapped to each API's own reasoning parameter
 - **Speech engines (on-device transcription):**
   - **Whisper** — WhisperKit for microphone and system audio, with on-demand model downloads
   - **Parakeet** — FluidAudio Parakeet for microphone and system audio
@@ -73,7 +74,7 @@ Maintainers: in **Actions**, run workflow **Release macOS DMG** with branch **ma
 
 1. Click the **Sniff** icon in the menu bar  
 2. Choose **Settings…**  
-3. Pick an **LLM provider** and **model** (use a vision-capable model if you rely on screen questions)  
+3. Pick an **LLM provider**, **model** (use a vision-capable model if you rely on screen questions), and **Thinking** level  
 4. **API keys:** enter and save for OpenAI, Claude, or Gemini. For **ChatGPT**, use the in-settings sign-in flow (OAuth).  
 5. Choose **Speech Engine** (Whisper or Parakeet) and configure Whisper model download / Parakeet options as shown  
 6. Optionally set **Input Device** and **Include Overlay in Screenshots**

@@ -3,7 +3,6 @@ import Foundation
 
 struct LLMRequestOptions {
   let maxTokens: Int
-  let temperature: Double?
 }
 
 enum PromptMode: CaseIterable {
@@ -197,13 +196,13 @@ enum PromptMode: CaseIterable {
   var options: LLMRequestOptions {
     switch self {
     case .answerQuestion, .ask:
-      return LLMRequestOptions(maxTokens: 2048, temperature: 0.2)
+      return LLMRequestOptions(maxTokens: 2048)
     case .solveScreen:
-      return LLMRequestOptions(maxTokens: 4096, temperature: 0.2)
+      return LLMRequestOptions(maxTokens: 4096)
     case .sayNext, .followUps:
-      return LLMRequestOptions(maxTokens: 512, temperature: 0.7)
+      return LLMRequestOptions(maxTokens: 512)
     case .recap:
-      return LLMRequestOptions(maxTokens: 1024, temperature: 0.3)
+      return LLMRequestOptions(maxTokens: 1024)
     }
   }
 }

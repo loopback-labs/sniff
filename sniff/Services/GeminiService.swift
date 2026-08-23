@@ -2,12 +2,14 @@ import Foundation
 
 
 class GeminiService: BaseLLMService {
-    private let model: String
+    private let model: LLMModelOption
+    private let thinkingLevel: ThinkingLevel
 
-    init(apiKey: String, model: String) {
+    init(apiKey: String, model: LLMModelOption, thinkingLevel: ThinkingLevel) {
         self.model = model
+        self.thinkingLevel = thinkingLevel
         let url =
-          "https://generativelanguage.googleapis.com/v1beta/models/\(model):streamGenerateContent"
+          "https://generativelanguage.googleapis.com/v1beta/models/\(model.id):streamGenerateContent"
         super.init(apiKey: apiKey, baseURL: url)
     }
 
@@ -40,33 +42,26 @@ class GeminiService: BaseLLMService {
     }
 
     private func generationConfig(for options: LLMRequestOptions) -> [String: Any] {
-        var config: [String: Any] = [
-            "maxOutputTokens": options.maxTokens,
-            "thinkingConfig": ["thinkingLevel": "MEDIUM"]
-        ]
-        if let temperature = options.temperature {
-            config["temperature"] = temperature
+        var config: [String: Any] = ["maxOutputTokens": options.maxTokens]
+        if model.supportsThinkingLevel {
+            config["thinkingConfig"] = ["thinkingLevel": thinkingLevel.geminiThinkingLevel]
         }
         return config
     }
 
     override func parseStreamLine(_ line: String) -> String? {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("data:") else { return nil }
-        let payload = trimmed.replacingOccurrences(of: "data:", with: "").trimmingCharacters(in: .whitespaces)
-        guard !payload.isEmpty else { return nil }
+        guard let payload = LLMStreamHelpers.sseDataPayload(from: line), !payload.isEmpty else { return nil }
 
         guard let data = payload.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let candidates = json["candidates"] as? [[String: Any]],
-              !candidates.isEmpty,
               let firstCandidate = candidates.first,
               let content = firstCandidate["content"] as? [String: Any],
-              let parts = content["parts"] as? [[String: Any]],
-              !parts.isEmpty,
-              let firstPart = parts.first,
-              let text = firstPart["text"] as? String else { return nil }
-        return text
+              let parts = content["parts"] as? [[String: Any]] else { return nil }
+
+        // Thought parts also carry `text`, so skip them rather than taking parts[0] blindly.
+        let answerPart = parts.first { ($0["thought"] as? Bool) != true }
+        return answerPart?["text"] as? String
     }
 
     override func isStreamDone(_ delta: String) -> Bool {

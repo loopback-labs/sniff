@@ -12,8 +12,13 @@ enum UserDefaultsKeys {
   static let onboardingCompleted = "onboardingCompleted"
 
   static let llmModelIdPrefix = "llmModelId_"
+  static let thinkingLevelPrefix = "thinkingLevel_"
 
   static func llmModelId(for provider: LLMProvider) -> String {
     "\(llmModelIdPrefix)\(provider.rawValue)"
+  }
+
+  static func thinkingLevel(for provider: LLMProvider) -> String {
+    "\(thinkingLevelPrefix)\(provider.rawValue)"
   }
 }

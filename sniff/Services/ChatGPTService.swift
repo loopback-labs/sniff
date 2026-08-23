@@ -2,14 +2,16 @@ import Foundation
 
 
 final class ChatGPTService: LLMService {
-  private let model: String
+  private let model: LLMModelOption
+  private let thinkingLevel: ThinkingLevel
   private let authManager: ChatGPTAuthManager
   // ChatGPT subscription (Codex) backend. Uses the Responses API shape, not
   // chat/completions. Must be paired with the Codex OAuth access token.
   private static let endpoint = URL(string: "https://chatgpt.com/backend-api/codex/responses")!
 
-  init(model: String, authManager: ChatGPTAuthManager) {
+  init(model: LLMModelOption, thinkingLevel: ThinkingLevel, authManager: ChatGPTAuthManager) {
     self.model = model
+    self.thinkingLevel = thinkingLevel
     self.authManager = authManager
   }
 
@@ -22,7 +24,7 @@ final class ChatGPTService: LLMService {
     let content: [[String: Any]] = [
       ["type": "input_text", "text": userMessage]
     ]
-    let body = Self.buildResponsesBody(model: model, instructions: systemPrompt, content: content)
+    let body = buildResponsesBody(instructions: systemPrompt, content: content)
     return try await performResponsesRequest(body: body, onChunk: onChunk)
   }
 
@@ -38,7 +40,7 @@ final class ChatGPTService: LLMService {
       ["type": "input_text", "text": userMessage],
       ["type": "input_image", "image_url": dataURL]
     ]
-    let body = Self.buildResponsesBody(model: model, instructions: systemPrompt, content: content)
+    let body = buildResponsesBody(instructions: systemPrompt, content: content)
     return try await performResponsesRequest(body: body, onChunk: onChunk)
   }
 
@@ -80,9 +82,9 @@ final class ChatGPTService: LLMService {
     return collected
   }
 
-  private static func buildResponsesBody(model: String, instructions: String, content: [[String: Any]]) -> [String: Any] {
-    [
-      "model": model,
+  func buildResponsesBody(instructions: String, content: [[String: Any]]) -> [String: Any] {
+    var body: [String: Any] = [
+      "model": model.id,
       "instructions": instructions,
       "input": [
         ["type": "message", "role": "user", "content": content]
@@ -90,6 +92,11 @@ final class ChatGPTService: LLMService {
       "stream": true,
       "store": false
     ]
+    // No `summary` — reasoning summaries would arrive as extra stream frames with nothing to show them in.
+    if model.supportsThinkingLevel {
+      body["reasoning"] = ["effort": thinkingLevel.effortValue]
+    }
+    return body
   }
 
   private static func parseResponsesSSELine(_ line: String) -> String? {
@@ -112,8 +119,9 @@ final class ChatGPTService: LLMService {
         return "__DONE__"
       }
     }
-    // Fallbacks for chat/completions-style frames, if the backend ever returns them.
-    if let delta = json["delta"] as? String { return delta }
+    // Fallbacks for chat/completions-style frames, if the backend ever returns them. Gated on an
+    // absent `type` so a typed frame we didn't match (e.g. a reasoning summary) can't leak through.
+    if json["type"] == nil, let delta = json["delta"] as? String { return delta }
     if let choices = json["choices"] as? [[String: Any]], let first = choices.first,
        let delta = first["delta"] as? [String: Any], let content = delta["content"] as? String {
       return content

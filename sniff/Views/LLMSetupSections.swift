@@ -34,6 +34,16 @@ struct LLMSetupSections: View {
           }
         }
 
+        Picker("Thinking", selection: $coordinator.selectedThinkingLevel) {
+          ForEach(ThinkingLevel.allCases) { level in
+            Text(level.displayName).tag(level)
+          }
+        }
+        .pickerStyle(.segmented)
+        .disabled(!selectedModel.supportsThinkingLevel)
+
+        thinkingCapabilityRow
+
         visionCapabilityRow
       }
 
@@ -73,14 +83,35 @@ struct LLMSetupSections: View {
     }
   }
 
+  private var selectedModel: LLMModelOption {
+    LLMModelCatalog.option(
+      provider: coordinator.selectedProvider,
+      modelId: coordinator.selectedModelId
+    )
+  }
+
+  @ViewBuilder
+  private var thinkingCapabilityRow: some View {
+    let supported = selectedModel.supportsThinkingLevel
+
+    Label {
+      Text(supported
+        ? "Higher levels reason longer before answering — better on hard questions, slower to the first word."
+        : "\(selectedModel.displayName) doesn't support thinking control.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    } icon: {
+      Image(systemName: supported ? "brain" : "minus.circle")
+        .foregroundStyle(supported ? Color.green : Color.secondary)
+    }
+  }
+
   /// Reports the actual capability of the currently selected model rather than a static
   /// "screen questions need vision" note.
   @ViewBuilder
   private var visionCapabilityRow: some View {
-    let supportsVision = LLMModelCatalog.supportsVision(
-      provider: coordinator.selectedProvider,
-      modelId: coordinator.selectedModelId
-    )
+    let supportsVision = selectedModel.supportsVision
 
     Label {
       Text(supportsVision

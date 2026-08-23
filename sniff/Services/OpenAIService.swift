@@ -2,10 +2,12 @@ import Foundation
 
 
 class OpenAIService: BaseLLMService {
-    private let model: String
+    private let model: LLMModelOption
+    private let thinkingLevel: ThinkingLevel
 
-    init(apiKey: String, model: String) {
+    init(apiKey: String, model: LLMModelOption, thinkingLevel: ThinkingLevel) {
         self.model = model
+        self.thinkingLevel = thinkingLevel
         super.init(apiKey: apiKey, baseURL: "https://api.openai.com/v1/chat/completions")
     }
 
@@ -16,24 +18,21 @@ class OpenAIService: BaseLLMService {
 
     override func buildTextRequestBody(userMessage: String, systemPrompt: String, options: LLMRequestOptions) -> [String: Any] {
         var body: [String: Any] = [
-            "model": model,
+            "model": model.id,
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": userMessage]
             ],
-            "max_tokens": options.maxTokens,
             "stream": true
         ]
-        if let temperature = options.temperature {
-            body["temperature"] = temperature
-        }
+        applyModelParameters(to: &body, options: options)
         return body
     }
 
     override func buildImageRequestBody(userMessage: String, systemPrompt: String, imageData: Data, options: LLMRequestOptions) -> [String: Any] {
         let dataURL = "data:image/jpeg;base64,\(imageData.base64EncodedString())"
         var body: [String: Any] = [
-            "model": model,
+            "model": model.id,
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 [
@@ -44,13 +43,18 @@ class OpenAIService: BaseLLMService {
                     ]
                 ]
             ],
-            "max_tokens": options.maxTokens,
             "stream": true
         ]
-        if let temperature = options.temperature {
-            body["temperature"] = temperature
-        }
+        applyModelParameters(to: &body, options: options)
         return body
+    }
+
+    /// Reasoning models take `max_completion_tokens` — `max_tokens` is deprecated and rejected.
+    private func applyModelParameters(to body: inout [String: Any], options: LLMRequestOptions) {
+        body["max_completion_tokens"] = options.maxTokens
+        if model.supportsThinkingLevel {
+            body["reasoning_effort"] = thinkingLevel.effortValue
+        }
     }
 
     override func parseStreamLine(_ line: String) -> String? {

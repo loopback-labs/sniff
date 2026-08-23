@@ -186,9 +186,4 @@ class AudioDeviceService: ObservableObject {
         }
         try setDefaultInputDevice(device.id)
     }
-    
-    func getDefaultInputDevice() -> AudioDevice? {
-        guard let deviceID = defaultInputDeviceID else { return nil }
-        return inputDevices.first { $0.id == deviceID }
-    }
 }

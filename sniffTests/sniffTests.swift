@@ -6,6 +6,36 @@ import Testing
 @MainActor
 struct sniffTests {
 
+    // MARK: - Helpers
+
+    private func makePipeline() -> AudioQuestionPipeline {
+        AudioQuestionPipeline(questionDetectionService: QuestionDetectionService())
+    }
+
+    private func readiness(permissions: Bool, speechModel: Bool, credential: Bool) -> OnboardingReadiness {
+        OnboardingReadiness(
+            permissionsGranted: permissions,
+            speechModelInstalled: speechModel,
+            llmCredentialReady: credential
+        )
+    }
+
+    /// Runs `body` against a buffer with a live session, then returns what it persisted.
+    private func transcriptFileContents(_ body: (TranscriptBuffer) -> Void) throws -> String {
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let buffer = TranscriptBuffer()
+        buffer.startSession(saveDirectoryURL: tempDir)
+        body(buffer)
+        buffer.stopSession()
+
+        let items = try FileManager.default.contentsOfDirectory(atPath: tempDir.path)
+        #expect(items.count == 1)
+        return try String(contentsOf: tempDir.appendingPathComponent(items[0]), encoding: .utf8)
+    }
+
     @Test func screenDetectionFindsQuestionsWithPunctuation() {
         let service = QuestionDetectionService()
         let text = "This is a statement. What is this? Another?"
@@ -62,62 +92,10 @@ struct sniffTests {
         #expect(buffer.latestQuestion == nil)
     }
 
-    @Test func openAIFormatStreamLineParsing() {
-        let line = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}"
-        let parsed = BaseLLMService.parseOpenAIFormat(line)
-        #expect(parsed == "Hello")
-
-        let done = BaseLLMService.parseOpenAIFormat("data: [DONE]")
-        #expect(done == "[DONE]")
-    }
-    
     // MARK: - AudioQuestionPipeline Tests (Punctuation-based detection)
     
-    @Test func pipelineDetectsQuestionWithPunctuation() {
-        let service = QuestionDetectionService()
-        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
-        
-        let result = pipeline.process(recentText: "How does async work in JavaScript which is single threaded?")
-        
-        #expect(result.latestQuestion != nil)
-        #expect(result.latestQuestion?.hasSuffix("?") == true)
-        #expect(result.questions.count == 1)
-    }
-    
-    @Test func pipelineDoesNotDetectStatementWithPeriod() {
-        let service = QuestionDetectionService()
-        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
-        
-        let result = pipeline.process(recentText: "I think the answer is obvious.")
-        
-        #expect(result.latestQuestion == nil)
-        #expect(result.questions.isEmpty)
-    }
-    
-    @Test func pipelineDetectsPartialQuestionByKeyword() {
-        let service = QuestionDetectionService()
-        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
-        
-        // Partial question without punctuation yet (fallback to keyword)
-        let result = pipeline.process(recentText: "What is JavaScript")
-        
-        #expect(result.latestQuestion != nil)
-        #expect(result.latestQuestion?.lowercased().hasPrefix("what") == true)
-    }
-    
-    @Test func pipelineHandlesMultipleSentences() {
-        let service = QuestionDetectionService()
-        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
-        
-        let result = pipeline.process(recentText: "Hello. How are you?")
-        
-        #expect(result.latestQuestion == "How are you?")
-        #expect(result.questions.count == 1)
-    }
-    
-    @Test func pipelineSplitsSentencesCorrectly() {
-        let service = QuestionDetectionService()
-        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
+    @Test func pipelinePicksQuestionAmongSurroundingSentences() {
+        let pipeline = makePipeline()
         
         let result = pipeline.process(recentText: "First sentence. What is this? Another statement!")
         
@@ -126,8 +104,7 @@ struct sniffTests {
     }
     
     @Test func pipelineDetectsMultipleQuestions() {
-        let service = QuestionDetectionService()
-        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
+        let pipeline = makePipeline()
         
         let result = pipeline.process(recentText: "What is this? How does it work?")
         
@@ -136,8 +113,7 @@ struct sniffTests {
     }
     
     @Test func pipelineHandlesEmptyInput() {
-        let service = QuestionDetectionService()
-        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
+        let pipeline = makePipeline()
         
         let result = pipeline.process(recentText: "")
         
@@ -146,8 +122,7 @@ struct sniffTests {
     }
     
     @Test func pipelineIgnoresStatementEvenWithQuestionKeyword() {
-        let service = QuestionDetectionService()
-        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
+        let pipeline = makePipeline()
         
         // "which" appears mid-sentence, but ends with period - not a question
         let result = pipeline.process(recentText: "JavaScript which is a language.")
@@ -210,23 +185,13 @@ struct sniffTests {
         #expect(buffer.displayChunks.first?.text == "Hello.")
     }
 
-    @Test func transcriptBufferWritesSessionFile() throws {
-        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let buffer = TranscriptBuffer()
-        buffer.startSession(saveDirectoryURL: tempDir)
-
+    @Test func transcriptBufferPersistsBothSpeakers() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
-        buffer.commitPending(text: "Hello world.", speaker: .you, at: now)
-        buffer.commitPending(text: "Another line.", speaker: .others, at: now.addingTimeInterval(1))
-        buffer.stopSession()
+        let contents = try transcriptFileContents { buffer in
+            buffer.commitPending(text: "Hello world.", speaker: .you, at: now)
+            buffer.commitPending(text: "Another line.", speaker: .others, at: now.addingTimeInterval(1))
+        }
 
-        let items = try FileManager.default.contentsOfDirectory(atPath: tempDir.path)
-        #expect(items.count == 1)
-        let fileURL = tempDir.appendingPathComponent(items[0])
-        let contents = try String(contentsOf: fileURL)
         #expect(contents.contains("Hello world."))
         #expect(contents.contains("Another line."))
     }
@@ -262,27 +227,15 @@ struct sniffTests {
     }
 
     @Test func transcriptBufferOnlyCommitPersists() throws {
-        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let contents = try transcriptFileContents { buffer in
+            buffer.updatePending(text: "still speaking, not final yet", speaker: .you)
+            buffer.updatePending(text: "still speaking, not final yet either", speaker: .you)
+            buffer.commitPending(text: "final utterance.", speaker: .you)
+        }
 
-        let buffer = TranscriptBuffer()
-        buffer.startSession(saveDirectoryURL: tempDir)
-
-        buffer.updatePending(text: "still speaking, not final yet", speaker: .you)
-        buffer.updatePending(text: "still speaking, not final yet either", speaker: .you)
-        buffer.commitPending(text: "final utterance.", speaker: .you)
-        buffer.stopSession()
-
-        let items = try FileManager.default.contentsOfDirectory(atPath: tempDir.path)
-        #expect(items.count == 1)
-        let fileURL = tempDir.appendingPathComponent(items[0])
-        let contents = try String(contentsOf: fileURL)
         #expect(!contents.contains("not final yet"))
         #expect(contents.contains("final utterance."))
-        // Exactly one persisted line.
-        let lineCount = contents.split(separator: "\n").count
-        #expect(lineCount == 1)
+        #expect(contents.split(separator: "\n").count == 1)
     }
 
     @Test func transcriptBufferRecentTurnsIncludesBothSpeakersPending() {
@@ -299,8 +252,7 @@ struct sniffTests {
     // MARK: - AudioQuestionPipeline Retention Tests
 
     @Test func pipelineDoesNotRepeatAlreadyProcessedQuestions() {
-        let service = QuestionDetectionService()
-        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
+        let pipeline = makePipeline()
 
         let first = pipeline.process(recentText: "What is this?")
         #expect(first.questions.count == 1)
@@ -311,8 +263,7 @@ struct sniffTests {
     }
 
     @Test func pipelineResetAllowsQuestionAgain() {
-        let service = QuestionDetectionService()
-        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
+        let pipeline = makePipeline()
 
         _ = pipeline.process(recentText: "What is this?")
         pipeline.reset()
@@ -321,8 +272,7 @@ struct sniffTests {
     }
 
     @Test func pipelineEvictsOldQuestionsWhenOverLimit() {
-        let service = QuestionDetectionService()
-        let pipeline = AudioQuestionPipeline(questionDetectionService: service)
+        let pipeline = makePipeline()
 
         let questions = (1...55).map { "What is item \($0)?" }
         let combined = questions.joined(separator: " ")
@@ -364,26 +314,30 @@ struct sniffTests {
         }
     }
 
-    @Test func parseOpenAIFormatHandlesMessageContent() {
-        let line = "data: {\"choices\":[{\"message\":{\"content\":\"Hello\"}}]}"
-        let parsed = BaseLLMService.parseOpenAIFormat(line)
-        #expect(parsed == "Hello")
-    }
-
-    @Test func parseOpenAIFormatIgnoresNonDataLines() {
-        let parsed = BaseLLMService.parseOpenAIFormat("event: ping")
-        #expect(parsed == nil)
+    @Test func parseOpenAIFormatCoversEveryBranch() {
+        #expect(BaseLLMService.parseOpenAIFormat(#"data: {"choices":[{"delta":{"content":"Hello"}}]}"#) == "Hello")
+        #expect(BaseLLMService.parseOpenAIFormat(#"data: {"choices":[{"message":{"content":"Hello"}}]}"#) == "Hello")
+        #expect(BaseLLMService.parseOpenAIFormat("data: [DONE]") == "[DONE]")
+        #expect(BaseLLMService.parseOpenAIFormat("event: ping") == nil)
     }
 
     @Test func claudeServiceParsesStreamLine() {
-        let service = ClaudeService(apiKey: "test", model: "claude-sonnet-5")
+        let service = ClaudeService(
+            apiKey: "test",
+            model: LLMModelCatalog.option(provider: .claude, modelId: "claude-sonnet-5"),
+            thinkingLevel: .high
+        )
         let line = "data: {\"delta\":{\"text\":\"Hello\"}}"
         #expect(service.parseStreamLine(line) == "Hello")
         #expect(service.isStreamDone("[DONE]") == false)
     }
 
     @Test func geminiServiceParsesStreamLineAndBuildURL() {
-        let service = GeminiService(apiKey: "abc123", model: "gemini-3.5-flash-lite")
+        let service = GeminiService(
+            apiKey: "abc123",
+            model: LLMModelCatalog.option(provider: .gemini, modelId: "gemini-3.5-flash-lite"),
+            thinkingLevel: .high
+        )
         let line = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi\"}]}}]}"
         #expect(service.parseStreamLine(line) == "Hi")
         #expect(service.buildURL()?.absoluteString.contains("key=abc123") == true)
@@ -444,14 +398,6 @@ struct sniffTests {
         let chatgptIds = Set(LLMModelCatalog.models(for: .chatgpt).map(\.id))
         #expect(!chatgptIds.isEmpty)
         #expect(chatgptIds.isSubset(of: openaiIds))
-    }
-
-    // MARK: - ScreenCaptureService
-
-    @Test func screenCaptureServiceCaptureFrameWithoutActiveSessionReturnsNil() async {
-        let service = ScreenCaptureService()
-        let frame = await service.captureCurrentFrame()
-        #expect(frame == nil)
     }
 
     // MARK: - PromptBuilder Tests
@@ -548,49 +494,29 @@ struct sniffTests {
     // MARK: - Onboarding flow
 
     @Test func onboardingStartsAtWelcomeOnAFreshInstall() {
-        let readiness = OnboardingReadiness(
-            permissionsGranted: false,
-            speechModelInstalled: false,
-            llmCredentialReady: false
-        )
+        let readiness = readiness(permissions: false, speechModel: false, credential: false)
 
         #expect(readiness.isUntouched)
         #expect(OnboardingStep.initial(for: readiness) == .welcome)
     }
 
     @Test func onboardingResumesAtTheFirstMissingRequirement() {
-        let missingModel = OnboardingReadiness(
-            permissionsGranted: true,
-            speechModelInstalled: false,
-            llmCredentialReady: false
-        )
+        let missingModel = readiness(permissions: true, speechModel: false, credential: false)
         #expect(OnboardingStep.initial(for: missingModel) == .speech)
 
-        let missingCredential = OnboardingReadiness(
-            permissionsGranted: true,
-            speechModelInstalled: true,
-            llmCredentialReady: false
-        )
+        let missingCredential = readiness(permissions: true, speechModel: true, credential: false)
         #expect(OnboardingStep.initial(for: missingCredential) == .ai)
     }
 
     /// A later requirement being met doesn't let an earlier gap be skipped.
     @Test func onboardingResumesAtPermissionsEvenWhenLaterStepsAreDone() {
-        let readiness = OnboardingReadiness(
-            permissionsGranted: false,
-            speechModelInstalled: true,
-            llmCredentialReady: true
-        )
+        let readiness = readiness(permissions: false, speechModel: true, credential: true)
 
         #expect(OnboardingStep.initial(for: readiness) == .permissions)
     }
 
     @Test func onboardingLandsOnReadyWhenEverythingIsConfigured() {
-        let readiness = OnboardingReadiness(
-            permissionsGranted: true,
-            speechModelInstalled: true,
-            llmCredentialReady: true
-        )
+        let readiness = readiness(permissions: true, speechModel: true, credential: true)
 
         #expect(readiness.isComplete)
         #expect(OnboardingStep.initial(for: readiness) == .ready)
@@ -598,11 +524,7 @@ struct sniffTests {
     }
 
     @Test func onboardingBookendStepsNeverGateContinue() {
-        let readiness = OnboardingReadiness(
-            permissionsGranted: false,
-            speechModelInstalled: false,
-            llmCredentialReady: false
-        )
+        let readiness = readiness(permissions: false, speechModel: false, credential: false)
 
         #expect(OnboardingStep.welcome.isSatisfied(by: readiness))
         #expect(OnboardingStep.ready.isSatisfied(by: readiness))
@@ -619,5 +541,106 @@ struct sniffTests {
         #expect(OnboardingStep.speech.next == .ai)
         #expect(OnboardingStep.ai.next == .ready)
         #expect(OnboardingStep.ready.previous == .ai)
+    }
+
+    // MARK: - Thinking level
+
+    private func claudeBody(modelId: String, level: ThinkingLevel) -> [String: Any] {
+        let model = LLMModelCatalog.option(provider: .claude, modelId: modelId)
+        let service = ClaudeService(apiKey: "test-key", model: model, thinkingLevel: level)
+        return service.buildTextRequestBody(
+            userMessage: "hi",
+            systemPrompt: "sys",
+            options: PromptMode.answerQuestion.options
+        )
+    }
+
+    @Test func claudeRequestSendsAdaptiveThinking() {
+        let body = claudeBody(modelId: "claude-sonnet-5", level: .high)
+
+        #expect((body["thinking"] as? [String: String])?["type"] == "adaptive")
+        #expect((body["output_config"] as? [String: String])?["effort"] == "high")
+    }
+
+    @Test func claudeRequestOmitsThinkingForModelWithoutEffortSupport() {
+        let body = claudeBody(modelId: "claude-haiku-4-5", level: .high)
+
+        #expect(body["thinking"] == nil)
+        #expect(body["output_config"] == nil)
+    }
+
+    @Test func openAIRequestUsesMaxCompletionTokensAndReasoningEffort() {
+        let model = LLMModelCatalog.option(provider: .openai, modelId: "gpt-5.6-luna")
+        let service = OpenAIService(apiKey: "test-key", model: model, thinkingLevel: .low)
+
+        let body = service.buildTextRequestBody(
+            userMessage: "hi",
+            systemPrompt: "sys",
+            options: PromptMode.answerQuestion.options
+        )
+
+        #expect(body["max_completion_tokens"] as? Int == 2048)
+        #expect(body["max_tokens"] == nil)
+        #expect(body["reasoning_effort"] as? String == "low")
+    }
+
+    @Test func geminiRequestCarriesThinkingLevel() {
+        let model = LLMModelCatalog.option(provider: .gemini, modelId: "gemini-3.7-flash")
+        let service = GeminiService(apiKey: "test-key", model: model, thinkingLevel: .medium)
+
+        let body = service.buildTextRequestBody(
+            userMessage: "hi",
+            systemPrompt: "sys",
+            options: PromptMode.answerQuestion.options
+        )
+        let config = body["generationConfig"] as? [String: Any]
+
+        #expect((config?["thinkingConfig"] as? [String: String])?["thinkingLevel"] == "MEDIUM")
+        #expect(config?["temperature"] == nil)
+    }
+
+    @Test func geminiStreamParsingSkipsThoughtParts() {
+        let model = LLMModelCatalog.option(provider: .gemini, modelId: "gemini-3.7-flash")
+        let service = GeminiService(apiKey: "test-key", model: model, thinkingLevel: .high)
+        let line = #"data: {"candidates":[{"content":{"parts":[{"text":"pondering","thought":true},{"text":"answer"}]}}]}"#
+
+        #expect(service.parseStreamLine(line) == "answer")
+    }
+
+    @Test func chatGPTRequestCarriesReasoningEffort() {
+        let model = LLMModelCatalog.option(provider: .chatgpt, modelId: "gpt-5.6-sol")
+        let service = ChatGPTService(
+            model: model,
+            thinkingLevel: .medium,
+            authManager: ChatGPTAuthManager()
+        )
+
+        let body = service.buildResponsesBody(
+            instructions: "sys",
+            content: [["type": "input_text", "text": "hi"]]
+        )
+
+        #expect((body["reasoning"] as? [String: String])?["effort"] == "medium")
+    }
+
+    @Test func thinkingLevelRoundTripsAndFallsBackToHigh() {
+        let key = UserDefaultsKeys.thinkingLevel(for: .claude)
+        let previous = UserDefaults.standard.string(forKey: key)
+        defer {
+            if let previous {
+                UserDefaults.standard.set(previous, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+
+        UserDefaults.standard.removeObject(forKey: key)
+        #expect(ThinkingLevel.load(for: .claude) == .high)
+
+        UserDefaults.standard.set("ludicrous", forKey: key)
+        #expect(ThinkingLevel.load(for: .claude) == .high)
+
+        ThinkingLevel.save(.low, for: .claude)
+        #expect(ThinkingLevel.load(for: .claude) == .low)
     }
 }

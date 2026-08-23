@@ -2,10 +2,12 @@ import Foundation
 
 
 class ClaudeService: BaseLLMService {
-    private let model: String
+    private let model: LLMModelOption
+    private let thinkingLevel: ThinkingLevel
 
-    init(apiKey: String, model: String) {
+    init(apiKey: String, model: LLMModelOption, thinkingLevel: ThinkingLevel) {
         self.model = model
+        self.thinkingLevel = thinkingLevel
         super.init(apiKey: apiKey, baseURL: "https://api.anthropic.com/v1/messages")
     }
 
@@ -17,21 +19,19 @@ class ClaudeService: BaseLLMService {
 
     override func buildTextRequestBody(userMessage: String, systemPrompt: String, options: LLMRequestOptions) -> [String: Any] {
         var body: [String: Any] = [
-            "model": model,
+            "model": model.id,
             "max_tokens": options.maxTokens,
             "system": systemPrompt,
             "messages": [["role": "user", "content": userMessage]],
             "stream": true
         ]
-        if let temperature = options.temperature {
-            body["temperature"] = temperature
-        }
+        applyThinkingParameters(to: &body)
         return body
     }
 
     override func buildImageRequestBody(userMessage: String, systemPrompt: String, imageData: Data, options: LLMRequestOptions) -> [String: Any] {
         var body: [String: Any] = [
-            "model": model,
+            "model": model.id,
             "max_tokens": options.maxTokens,
             "system": systemPrompt,
             "messages": [
@@ -52,17 +52,20 @@ class ClaudeService: BaseLLMService {
             ],
             "stream": true
         ]
-        if let temperature = options.temperature {
-            body["temperature"] = temperature
-        }
+        applyThinkingParameters(to: &body)
         return body
     }
 
+    private func applyThinkingParameters(to body: inout [String: Any]) {
+        guard model.supportsThinkingLevel else { return }
+        body["thinking"] = ["type": "adaptive"]
+        body["output_config"] = ["effort": thinkingLevel.effortValue]
+    }
+
     override func parseStreamLine(_ line: String) -> String? {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("data:") else { return nil }
-        let payload = trimmed.replacingOccurrences(of: "data:", with: "").trimmingCharacters(in: .whitespaces)
-        
+        guard let payload = LLMStreamHelpers.sseDataPayload(from: line) else { return nil }
+
+        // Thinking deltas carry `delta.thinking`, so keying off `delta.text` skips them.
         guard let data = payload.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let delta = json["delta"] as? [String: Any],

@@ -35,12 +35,13 @@ class AppCoordinator: NSObject, ObservableObject {
     @Published var selectedProvider: LLMProvider {
         didSet {
             UserDefaults.standard.set(selectedProvider.rawValue, forKey: UserDefaultsKeys.selectedLLMProvider)
-            let next = LLMModelCatalog.loadOrDefaultModelId(for: selectedProvider)
-            if next != selectedModelId {
-                selectedModelId = next
-            } else {
-                rebuildLLMService()
-            }
+            // Model and thinking level are both stored per provider, so both reload here. The nested
+            // didSets may rebuild more than once — cheap, and clearer than a suppression flag. The
+            // trailing rebuild is load-bearing: OpenAI and ChatGPT share model ids, so selectedModelId
+            // can stay unchanged and never fire.
+            selectedModelId = LLMModelCatalog.loadOrDefaultModelId(for: selectedProvider)
+            selectedThinkingLevel = ThinkingLevel.load(for: selectedProvider)
+            rebuildLLMService()
         }
     }
 
@@ -48,6 +49,13 @@ class AppCoordinator: NSObject, ObservableObject {
         didSet {
             guard !selectedModelId.isEmpty else { return }
             LLMModelCatalog.saveModelId(selectedModelId, for: selectedProvider)
+            rebuildLLMService()
+        }
+    }
+
+    @Published var selectedThinkingLevel: ThinkingLevel {
+        didSet {
+            ThinkingLevel.save(selectedThinkingLevel, for: selectedProvider)
             rebuildLLMService()
         }
     }
@@ -126,6 +134,7 @@ class AppCoordinator: NSObject, ObservableObject {
         audioQuestionPipeline = AudioQuestionPipeline(questionDetectionService: questionDetectionService)
 
         selectedModelId = LLMModelCatalog.loadOrDefaultModelId(for: initialLLMProvider)
+        selectedThinkingLevel = ThinkingLevel.load(for: initialLLMProvider)
 
         super.init()
 
@@ -151,6 +160,7 @@ class AppCoordinator: NSObject, ObservableObject {
         llmService = LLMServiceFactory.makeService(
             provider: selectedProvider,
             modelId: resolvedModelId(),
+            thinkingLevel: selectedThinkingLevel,
             keychain: keychainService,
             chatGPTAuth: chatGPTAuthManager
         )
@@ -444,7 +454,6 @@ class AppCoordinator: NSObject, ObservableObject {
         isRunning = false
     }
     
-    /// The model the selected engine will actually load, across both engines.
     var selectedSpeechModel: SpeechModel {
         switch selectedSpeechEngine {
         case .whisper: return .whisper(selectedWhisperModelID)
@@ -677,8 +686,7 @@ class AppCoordinator: NSObject, ObservableObject {
         hotKeys.append(clickThroughHotKey)
     }
 
-    /// Starts a ~20 Hz cursor poll (no accessibility permission needed) that flips each overlay
-    /// window's click-through state based on whether the cursor is over a registered control.
+    /// Polls the cursor rather than installing an event tap, which would need Accessibility.
     private func startClickThroughTracking() {
         clickThroughTimer?.invalidate()
         clickThroughTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
@@ -715,9 +723,6 @@ class AppCoordinator: NSObject, ObservableObject {
         askComposerFocusToken = UUID()
     }
 
-    /// Central entry point for every prompting mode (detected question, screenshot solve, say-next,
-    /// follow-ups, recap, typed ask). Builds context-aware prompts via `PromptBuilder` and streams
-    /// the answer through the currently selected provider.
     func runMode(_ mode: PromptMode, typedText: String? = nil) {
         switch mode {
         case .answerQuestion:
@@ -751,8 +756,6 @@ class AppCoordinator: NSObject, ObservableObject {
         }
     }
 
-    /// Resolves screenshot data according to the mode's `imageCapture` policy: unconditional capture
-    /// for modes that require one, vision-gated opportunistic capture for modes that use it if available.
     private func captureImageIfNeeded(for mode: PromptMode) async -> Data? {
         switch mode.imageCapture {
         case .none:
