@@ -563,14 +563,20 @@ struct sniffTests {
     }
 
     @Test func claudeRequestOmitsThinkingForModelWithoutEffortSupport() {
-        let body = claudeBody(modelId: "claude-haiku-4-5", level: .high)
+        let model = LLMModelOption(id: "claude-legacy", supportsVision: true, supportsThinkingLevel: false)
+        let service = ClaudeService(apiKey: "test-key", model: model, thinkingLevel: .high)
+        let body = service.buildTextRequestBody(
+            userMessage: "hi",
+            systemPrompt: "sys",
+            options: PromptMode.answerQuestion.options
+        )
 
         #expect(body["thinking"] == nil)
         #expect(body["output_config"] == nil)
     }
 
     @Test func openAIRequestUsesMaxCompletionTokensAndReasoningEffort() {
-        let model = LLMModelCatalog.option(provider: .openai, modelId: "gpt-5.6-luna")
+        let model = LLMModelCatalog.option(provider: .openai, modelId: "gpt-6-luna")
         let service = OpenAIService(apiKey: "test-key", model: model, thinkingLevel: .low)
 
         let body = service.buildTextRequestBody(
@@ -608,7 +614,7 @@ struct sniffTests {
     }
 
     @Test func chatGPTRequestCarriesReasoningEffort() {
-        let model = LLMModelCatalog.option(provider: .chatgpt, modelId: "gpt-5.6-sol")
+        let model = LLMModelCatalog.option(provider: .chatgpt, modelId: "gpt-6-sol")
         let service = ChatGPTService(
             model: model,
             thinkingLevel: .medium,
